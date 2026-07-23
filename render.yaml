@@ -17,6 +17,8 @@ services:
         value: production
       - key: CORS_ALLOWED_ORIGINS
         sync: false
+      - key: AUTH_EMAIL_REDIRECT_URL
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY

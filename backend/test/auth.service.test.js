@@ -5,6 +5,7 @@ require('ts-node/register/transpile-only');
 const { AuthService } = require('../src/auth.service');
 
 function createDependencies() {
+  const signupRequests = [];
   const user = {
     id: '5e08bc27-2cbd-4a26-a876-733c25de5f09',
     email: 'student@gsm.hs.kr',
@@ -12,17 +13,20 @@ function createDependencies() {
     user_metadata: { name: '홍길동' },
   };
   const authApi = {
-    signUp: async () => ({
-      data: {
-        user,
-        session: {
-          access_token: 'access-token',
-          refresh_token: 'refresh-token',
-          expires_at: 1234,
+    signUp: async (request) => {
+      signupRequests.push(request);
+      return {
+        data: {
+          user,
+          session: {
+            access_token: 'access-token',
+            refresh_token: 'refresh-token',
+            expires_at: 1234,
+          },
         },
-      },
-      error: null,
-    }),
+        error: null,
+      };
+    },
     signInWithPassword: async () => ({
       data: {
         user,
@@ -55,7 +59,7 @@ function createDependencies() {
   const repository = {
     createSignupProfile: async (input) => profileSetups.push(input),
   };
-  return { supabase, repository, profileSetups };
+  return { supabase, repository, profileSetups, signupRequests };
 }
 
 test('signs up a verified-domain account and creates its local profile', async () => {
@@ -75,6 +79,41 @@ test('signs up a verified-domain account and creates its local profile', async (
   assert.equal(result.data.session.accessToken, 'access-token');
   assert.equal(profileSetups.length, 1);
   assert.equal(profileSetups[0].studentNumber, 2103);
+});
+
+test('uses the deployed frontend origin for verification email redirects', async (t) => {
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousRedirect = process.env.AUTH_EMAIL_REDIRECT_URL;
+  const previousOrigins = process.env.CORS_ALLOWED_ORIGINS;
+  t.after(() => {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    if (previousRedirect === undefined) delete process.env.AUTH_EMAIL_REDIRECT_URL;
+    else process.env.AUTH_EMAIL_REDIRECT_URL = previousRedirect;
+    if (previousOrigins === undefined) delete process.env.CORS_ALLOWED_ORIGINS;
+    else process.env.CORS_ALLOWED_ORIGINS = previousOrigins;
+  });
+
+  process.env.NODE_ENV = 'production';
+  delete process.env.AUTH_EMAIL_REDIRECT_URL;
+  process.env.CORS_ALLOWED_ORIGINS =
+    'http://localhost:5173, https://gsm-compass.vercel.app/';
+
+  const { supabase, repository, signupRequests } = createDependencies();
+  const service = new AuthService(supabase, repository);
+
+  await service.signup(
+    'student@gsm.hs.kr',
+    'password123',
+    'Test Student',
+    2103,
+    { terms: true, privacy: true },
+  );
+
+  assert.equal(
+    signupRequests[0].options.emailRedirectTo,
+    'https://gsm-compass.vercel.app',
+  );
 });
 
 test('rejects a non-GSM email before calling the auth provider', async () => {

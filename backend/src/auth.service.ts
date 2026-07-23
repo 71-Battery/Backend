@@ -117,11 +117,13 @@ export class AuthService {
 
     let result;
     try {
+      const emailRedirectTo = this.resolveEmailRedirectUrl();
       result = await this.supabase.auth.auth.signUp({
         email: normalizedEmail,
         password,
         options: {
           data: normalizedName ? { name: normalizedName } : {},
+          ...(emailRedirectTo ? { emailRedirectTo } : {}),
         },
       });
     } catch {
@@ -336,6 +338,46 @@ export class AuthService {
     };
     this.memoryUsers.set(email, user);
     return this.memorySessionResponse(user);
+  }
+
+  private resolveEmailRedirectUrl() {
+    const configuredRedirect = process.env.AUTH_EMAIL_REDIRECT_URL?.trim();
+    const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean);
+
+    for (const candidate of [configuredRedirect, ...allowedOrigins]) {
+      if (!candidate) continue;
+
+      try {
+        const url = new URL(candidate);
+        const isLoopback = ['localhost', '127.0.0.1', '[::1]'].includes(
+          url.hostname,
+        );
+        const isAllowedProtocol =
+          url.protocol === 'https:' ||
+          (process.env.NODE_ENV !== 'production' &&
+            url.protocol === 'http:' &&
+            isLoopback);
+
+        if (
+          !isAllowedProtocol ||
+          url.username ||
+          url.password ||
+          url.search ||
+          url.hash
+        ) {
+          continue;
+        }
+
+        return url.origin;
+      } catch {
+        // Ignore malformed server configuration and try the next safe origin.
+      }
+    }
+
+    return undefined;
   }
 
   private memoryLogin(email: string, password: string) {
