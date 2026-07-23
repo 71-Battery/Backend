@@ -145,7 +145,7 @@ test('uses the deployed frontend origin for verification email redirects', async
 
   assert.equal(
     signupRequests[0].options.emailRedirectTo,
-    'https://gsm-compass.vercel.app',
+    'https://gsm-compass.vercel.app/auth/confirmed',
   );
 });
 

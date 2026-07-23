@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   Headers,
   HttpCode,
   Post,
@@ -47,4 +48,9 @@ export class AuthController {
     const token = authorization.slice('Bearer '.length).trim();
     await this.authService.logout(token);
   }
+
+  @Get('confirmation')
+  @UseGuards(BearerAuthGuard)
+  @HttpCode(204)
+  confirmation() {}
 }

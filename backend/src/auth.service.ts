@@ -427,7 +427,7 @@ export class AuthService {
           continue;
         }
 
-        return url.origin;
+        return new URL('/auth/confirmed', url.origin).toString();
       } catch {
         // Ignore malformed server configuration and try the next safe origin.
       }
