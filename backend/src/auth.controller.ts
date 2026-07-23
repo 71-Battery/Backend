@@ -1,5 +1,13 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Headers,
+  HttpCode,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
+import { BearerAuthGuard } from './bearer-auth.guard';
 
 type LoginRequest = {
   email?: string;
@@ -30,5 +38,13 @@ export class AuthController {
   @Post('login')
   login(@Body() body: LoginRequest) {
     return this.authService.login(body?.email || '', body?.password || '');
+  }
+
+  @Post('logout')
+  @UseGuards(BearerAuthGuard)
+  @HttpCode(204)
+  async logout(@Headers('authorization') authorization = '') {
+    const token = authorization.slice('Bearer '.length).trim();
+    await this.authService.logout(token);
   }
 }

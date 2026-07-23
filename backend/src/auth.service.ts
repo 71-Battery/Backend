@@ -269,6 +269,47 @@ export class AuthService {
     };
   }
 
+  async logout(token: string) {
+    if (!token || token.length > 8192) {
+      throw new ApiException(
+        'INVALID_TOKEN',
+        '로그인이 만료되었거나 유효하지 않습니다.',
+        401,
+      );
+    }
+
+    if (this.allowMemoryAuth && this.memoryTokens.delete(token)) return;
+
+    if (!this.supabase.hasAuthConfig) {
+      throw new ApiException(
+        'AUTH_NOT_CONFIGURED',
+        '인증 서비스가 구성되지 않았습니다.',
+        503,
+      );
+    }
+
+    try {
+      const { error } = await this.supabase.auth.auth.admin.signOut(
+        token,
+        'local',
+      );
+      if (error) {
+        throw new ApiException(
+          'AUTH_PROVIDER_UNAVAILABLE',
+          '인증 서비스에 연결할 수 없습니다.',
+          503,
+        );
+      }
+    } catch (error) {
+      if (error instanceof ApiException) throw error;
+      throw new ApiException(
+        'AUTH_PROVIDER_UNAVAILABLE',
+        '인증 서비스에 연결할 수 없습니다.',
+        503,
+      );
+    }
+  }
+
   async verifyAccessToken(token: string): Promise<AuthenticatedUser | null> {
     if (!token || token.length > 8192) return null;
 

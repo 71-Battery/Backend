@@ -9,6 +9,7 @@ function createDependencies({
   studentLookupError = null,
 } = {}) {
   const signupRequests = [];
+  const signOutRequests = [];
   const studentLookupEmails = [];
   const user = {
     id: '5e08bc27-2cbd-4a26-a876-733c25de5f09',
@@ -46,6 +47,12 @@ function createDependencies({
       data: { user: token === 'access-token' ? user : null },
       error: token === 'access-token' ? null : { message: 'invalid' },
     }),
+    admin: {
+      signOut: async (token, scope) => {
+        signOutRequests.push({ token, scope });
+        return { data: null, error: null };
+      },
+    },
   };
   const supabase = {
     hasAuthConfig: true,
@@ -76,6 +83,7 @@ function createDependencies({
     dataGsm,
     profileSetups,
     signupRequests,
+    signOutRequests,
     studentLookupEmails,
   };
 }
@@ -251,6 +259,34 @@ test('logs in and verifies the Supabase access token', async () => {
     email: 'student@gsm.hs.kr',
   });
   assert.equal(rejected, null);
+});
+
+test('revokes the current Supabase session during logout', async () => {
+  const { supabase, repository, dataGsm, signOutRequests } =
+    createDependencies();
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  await service.logout('access-token');
+
+  assert.deepEqual(signOutRequests, [
+    { token: 'access-token', scope: 'local' },
+  ]);
+});
+
+test('maps a Supabase logout failure to a safe provider error', async () => {
+  const { supabase, repository, dataGsm } = createDependencies();
+  supabase.auth.auth.admin.signOut = async () => ({
+    data: null,
+    error: { message: 'sensitive upstream failure' },
+  });
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  await assert.rejects(
+    service.logout('access-token'),
+    (error) =>
+      error.code === 'AUTH_PROVIDER_UNAVAILABLE' &&
+      !error.message.includes('sensitive upstream failure'),
+  );
 });
 
 test('compensates a failed profile provisioning by removing the new auth user', async () => {
