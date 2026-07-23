@@ -1,14 +1,13 @@
-//
-// 공통 API 호출 모듈입니다.
-// 이 파일은 프론트엔드가 백엔드 API와 통신할 때 재사용할 fetch 함수나 공통 설정을 담습니다.
-//
-// 작성 포인트:
-// - base URL 설정
-// - 공통 헤더 설정
-// - 에러 처리 함수
-// - 인증 토큰 포함 로직
-//
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 
-export async function request(url, options = {}) {
-  return fetch(url, options);
+export async function signup({ name, email, password }) {
+  const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, email, password }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || 'Signup request failed');
+  return data;
 }
