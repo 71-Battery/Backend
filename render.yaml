@@ -7,7 +7,7 @@ services:
     # longer first-request budget so login/profile requests can recover.
     plan: free
     rootDir: backend
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci --include=dev && npm run build && npm prune --omit=dev
     startCommand: node dist/main.js
     healthCheckPath: /api/health
     envVars:
