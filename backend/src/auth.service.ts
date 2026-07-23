@@ -3,6 +3,7 @@ import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'crypto';
 import { z } from 'zod';
 import { ApiException } from './common/api-exception';
 import type { AuthenticatedUser } from './common/authenticated-user';
+import { DataGsmClient } from './data-gsm/data-gsm.client';
 import { RepositoryService } from './repository.service';
 import { SupabaseService } from './supabase.service';
 
@@ -36,6 +37,7 @@ export class AuthService {
     private readonly repository: RepositoryService = new RepositoryService(
       supabase,
     ),
+    private readonly dataGsm: DataGsmClient = new DataGsmClient(),
   ) {}
 
   async signup(
@@ -83,6 +85,8 @@ export class AuthService {
         400,
       );
     }
+
+    await this.verifyStudentIdentity(normalizedEmail, studentNumber.data);
 
     if (!this.supabase.hasAuthConfig) {
       if (this.allowMemoryAuth) {
@@ -338,6 +342,17 @@ export class AuthService {
     };
     this.memoryUsers.set(email, user);
     return this.memorySessionResponse(user);
+  }
+
+  private async verifyStudentIdentity(email: string, studentNumber: number) {
+    const student = await this.dataGsm.getStudentByEmail(email);
+    if (!student || student.studentNumber !== studentNumber) {
+      throw new ApiException(
+        'STUDENT_IDENTITY_MISMATCH',
+        '학교 이메일과 학번이 재학생 정보와 일치하지 않습니다.',
+        400,
+      );
+    }
   }
 
   private resolveEmailRedirectUrl() {
