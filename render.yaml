@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: gsm-compass-api
+    runtime: node
+    region: singapore
+    # Free services can cold-start after an idle period. The frontend uses a
+    # longer first-request budget so login/profile requests can recover.
+    plan: free
+    rootDir: backend
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/main.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.14.0
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: DATA_GSM_BASE_URL
+        value: https://openapi.datagsm.kr
+      - key: DATA_GSM_API_KEY
+        sync: false
+      - key: DATA_GSM_TIMEOUT_MS
+        value: "5000"
+      - key: DATA_GSM_PROFILE_TTL_SECONDS
+        value: "300"
+      - key: DATA_GSM_SCHEDULE_TTL_SECONDS
+        value: "3600"
+      - key: CACHE_KEY_SECRET
+        generateValue: true
+      - key: CAMPUS_AI_API_URL
+        sync: false
+      - key: CAMPUS_AI_TOP_K
+        value: "4"
+      - key: CAMPUS_AI_SCORE_THRESHOLD
+        value: "1.5"
+      - key: CAMPUS_AI_CONNECT_TIMEOUT
+        value: "5"
+      - key: CAMPUS_AI_READ_TIMEOUT
+        value: "60"

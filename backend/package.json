@@ -1,0 +1,31 @@
+{
+  "name": "gsm-backend",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.11.1"
+  },
+  "scripts": {
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "build": "nest build",
+    "test": "node --test test/**/*.test.js"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.1.28",
+    "@nestjs/core": "^11.1.28",
+    "@nestjs/platform-express": "^11.1.28",
+    "@supabase/supabase-js": "^2.110.8",
+    "dotenv": "^16.6.1",
+    "reflect-metadata": "^0.2.1",
+    "rxjs": "^7.6.0",
+    "undici": "^6.27.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.24",
+    "@types/node": "^20.14.15",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  }
+}

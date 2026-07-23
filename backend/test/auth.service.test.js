@@ -1,0 +1,137 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+require('ts-node/register/transpile-only');
+
+const { AuthService } = require('../src/auth.service');
+
+function createDependencies() {
+  const user = {
+    id: '5e08bc27-2cbd-4a26-a876-733c25de5f09',
+    email: 'student@gsm.hs.kr',
+    email_confirmed_at: '2026-07-23T00:00:00.000Z',
+    user_metadata: { name: '홍길동' },
+  };
+  const authApi = {
+    signUp: async () => ({
+      data: {
+        user,
+        session: {
+          access_token: 'access-token',
+          refresh_token: 'refresh-token',
+          expires_at: 1234,
+        },
+      },
+      error: null,
+    }),
+    signInWithPassword: async () => ({
+      data: {
+        user,
+        session: {
+          access_token: 'access-token',
+          refresh_token: 'refresh-token',
+          expires_at: 1234,
+        },
+      },
+      error: null,
+    }),
+    getUser: async (token) => ({
+      data: { user: token === 'access-token' ? user : null },
+      error: token === 'access-token' ? null : { message: 'invalid' },
+    }),
+  };
+  const supabase = {
+    hasAuthConfig: true,
+    hasDatabaseConfig: true,
+    auth: { auth: authApi },
+    db: {
+      auth: {
+        admin: {
+          deleteUser: async () => ({ error: null }),
+        },
+      },
+    },
+  };
+  const profileSetups = [];
+  const repository = {
+    createSignupProfile: async (input) => profileSetups.push(input),
+  };
+  return { supabase, repository, profileSetups };
+}
+
+test('signs up a verified-domain account and creates its local profile', async () => {
+  const { supabase, repository, profileSetups } = createDependencies();
+  const service = new AuthService(supabase, repository);
+
+  const result = await service.signup(
+    'Student@GSM.HS.KR',
+    'password123',
+    '홍길동',
+    2103,
+    { terms: true, privacy: true, notifications: false },
+  );
+
+  assert.equal(result.status, 'OK');
+  assert.equal(result.data.token, 'access-token');
+  assert.equal(result.data.session.accessToken, 'access-token');
+  assert.equal(profileSetups.length, 1);
+  assert.equal(profileSetups[0].studentNumber, 2103);
+});
+
+test('rejects a non-GSM email before calling the auth provider', async () => {
+  const { supabase, repository } = createDependencies();
+  const service = new AuthService(supabase, repository);
+
+  await assert.rejects(
+    service.signup(
+      'student@example.com',
+      'password123',
+      '홍길동',
+      2103,
+      { terms: true, privacy: true },
+    ),
+    (error) => error.code === 'INVALID_SCHOOL_EMAIL',
+  );
+});
+
+test('logs in and verifies the Supabase access token', async () => {
+  const { supabase, repository } = createDependencies();
+  const service = new AuthService(supabase, repository);
+
+  const login = await service.login('student@gsm.hs.kr', 'password123');
+  const verified = await service.verifyAccessToken('access-token');
+  const rejected = await service.verifyAccessToken('tampered');
+
+  assert.equal(login.data.session.accessToken, 'access-token');
+  assert.deepEqual(verified, {
+    id: '5e08bc27-2cbd-4a26-a876-733c25de5f09',
+    email: 'student@gsm.hs.kr',
+  });
+  assert.equal(rejected, null);
+});
+
+test('compensates a failed profile provisioning by removing the new auth user', async () => {
+  const { supabase } = createDependencies();
+  let deletedUserId = null;
+  supabase.db.auth.admin.deleteUser = async (userId) => {
+    deletedUserId = userId;
+    return { error: null };
+  };
+  const expectedError = new Error('safe repository failure');
+  const service = new AuthService(supabase, {
+    createSignupProfile: async () => {
+      throw expectedError;
+    },
+  });
+
+  await assert.rejects(
+    service.signup(
+      'student@gsm.hs.kr',
+      'password123',
+      '홍길동',
+      2103,
+      { terms: true, privacy: true },
+    ),
+    expectedError,
+  );
+  assert.equal(deletedUserId, '5e08bc27-2cbd-4a26-a876-733c25de5f09');
+});
