@@ -7,15 +7,21 @@ const { AuthService } = require('../src/auth.service');
 function createDependencies({
   student = { studentNumber: 2103 },
   studentLookupError = null,
+  existingAuthUsers = [],
+  authUserOverrides = {},
 } = {}) {
   const signupRequests = [];
+  const resendRequests = [];
   const signOutRequests = [];
+  const deletedUserIds = [];
   const studentLookupEmails = [];
   const user = {
     id: '5e08bc27-2cbd-4a26-a876-733c25de5f09',
     email: 'student@gsm.hs.kr',
     email_confirmed_at: '2026-07-23T00:00:00.000Z',
+    created_at: '2026-07-22T00:00:00.000Z',
     user_metadata: { name: '홍길동' },
+    ...authUserOverrides,
   };
   const authApi = {
     signUp: async (request) => {
@@ -23,11 +29,13 @@ function createDependencies({
       return {
         data: {
           user,
-          session: {
-            access_token: 'access-token',
-            refresh_token: 'refresh-token',
-            expires_at: 1234,
-          },
+          session: user.email_confirmed_at
+            ? {
+                access_token: 'access-token',
+                refresh_token: 'refresh-token',
+                expires_at: 1234,
+              }
+            : null,
         },
         error: null,
       };
@@ -43,6 +51,10 @@ function createDependencies({
       },
       error: null,
     }),
+    resend: async (request) => {
+      resendRequests.push(request);
+      return { data: {}, error: null };
+    },
     getUser: async (token) => ({
       data: { user: token === 'access-token' ? user : null },
       error: token === 'access-token' ? null : { message: 'invalid' },
@@ -61,7 +73,17 @@ function createDependencies({
     db: {
       auth: {
         admin: {
-          deleteUser: async () => ({ error: null }),
+          listUsers: async ({ page, perPage }) => {
+            const start = (page - 1) * perPage;
+            return {
+              data: { users: existingAuthUsers.slice(start, start + perPage) },
+              error: null,
+            };
+          },
+          deleteUser: async (userId) => {
+            deletedUserIds.push(userId);
+            return { error: null };
+          },
         },
       },
     },
@@ -83,7 +105,9 @@ function createDependencies({
     dataGsm,
     profileSetups,
     signupRequests,
+    resendRequests,
     signOutRequests,
+    deletedUserIds,
     studentLookupEmails,
   };
 }
@@ -290,12 +314,7 @@ test('maps a Supabase logout failure to a safe provider error', async () => {
 });
 
 test('compensates a failed profile provisioning by removing the new auth user', async () => {
-  const { supabase, dataGsm } = createDependencies();
-  let deletedUserId = null;
-  supabase.db.auth.admin.deleteUser = async (userId) => {
-    deletedUserId = userId;
-    return { error: null };
-  };
+  const { supabase, dataGsm, deletedUserIds } = createDependencies();
   const expectedError = new Error('safe repository failure');
   const service = new AuthService(supabase, {
     createSignupProfile: async () => {
@@ -313,5 +332,144 @@ test('compensates a failed profile provisioning by removing the new auth user', 
     ),
     expectedError,
   );
-  assert.equal(deletedUserId, '5e08bc27-2cbd-4a26-a876-733c25de5f09');
+  assert.deepEqual(deletedUserIds, [
+    '5e08bc27-2cbd-4a26-a876-733c25de5f09',
+  ]);
+});
+
+test('returns verification timing metadata for a new unconfirmed account', async () => {
+  const { supabase, repository, dataGsm } = createDependencies({
+    authUserOverrides: {
+      email_confirmed_at: null,
+      created_at: new Date().toISOString(),
+    },
+  });
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  const result = await service.signup(
+    'student@gsm.hs.kr',
+    'password123',
+    '홍길동',
+    2103,
+    { terms: true, privacy: true },
+  );
+
+  assert.equal(result.data.token, null);
+  assert.equal(result.data.verificationRequired, true);
+  assert.ok(Date.parse(result.data.verificationExpiresAt) > Date.now());
+  assert.ok(Date.parse(result.data.resendAvailableAt) > Date.now());
+  assert.ok(Date.parse(result.data.accountExpiresAt) > Date.now());
+});
+
+test('keeps a recent unconfirmed account available without signing up twice', async () => {
+  const createdAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const existingUser = {
+    id: 'pending-user-id',
+    email: 'student@gsm.hs.kr',
+    email_confirmed_at: null,
+    created_at: createdAt,
+  };
+  const {
+    supabase,
+    repository,
+    dataGsm,
+    signupRequests,
+    profileSetups,
+  } = createDependencies({ existingAuthUsers: [existingUser] });
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  const result = await service.signup(
+    'student@gsm.hs.kr',
+    'password123',
+    '홍길동',
+    2103,
+    { terms: true, privacy: true },
+  );
+
+  assert.equal(result.data.user.id, 'pending-user-id');
+  assert.equal(result.data.verificationRequired, true);
+  assert.equal(signupRequests.length, 0);
+  assert.equal(profileSetups.length, 0);
+});
+
+test('deletes an expired unconfirmed account before creating it again', async () => {
+  const existingUser = {
+    id: 'expired-user-id',
+    email: 'student@gsm.hs.kr',
+    email_confirmed_at: null,
+    created_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+  };
+  const {
+    supabase,
+    repository,
+    dataGsm,
+    signupRequests,
+    deletedUserIds,
+  } = createDependencies({ existingAuthUsers: [existingUser] });
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  await service.signup(
+    'student@gsm.hs.kr',
+    'password123',
+    '홍길동',
+    2103,
+    { terms: true, privacy: true },
+  );
+
+  assert.deepEqual(deletedUserIds, ['expired-user-id']);
+  assert.equal(signupRequests.length, 1);
+});
+
+test('resends a signup verification email with a fresh one-hour window', async (t) => {
+  const previousRedirect = process.env.AUTH_EMAIL_REDIRECT_URL;
+  t.after(() => {
+    if (previousRedirect === undefined) delete process.env.AUTH_EMAIL_REDIRECT_URL;
+    else process.env.AUTH_EMAIL_REDIRECT_URL = previousRedirect;
+  });
+  process.env.AUTH_EMAIL_REDIRECT_URL = 'https://gsm-compass.vercel.app';
+
+  const existingUser = {
+    id: 'pending-user-id',
+    email: 'student@gsm.hs.kr',
+    email_confirmed_at: null,
+    created_at: new Date().toISOString(),
+  };
+  const { supabase, repository, dataGsm, resendRequests } = createDependencies({
+    existingAuthUsers: [existingUser],
+  });
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  const result = await service.resendVerification('student@gsm.hs.kr');
+
+  assert.deepEqual(resendRequests, [
+    {
+      type: 'signup',
+      email: 'student@gsm.hs.kr',
+      options: {
+        emailRedirectTo: 'https://gsm-compass.vercel.app/auth/confirmed',
+      },
+    },
+  ]);
+  assert.equal(result.data.verificationRequired, true);
+  assert.ok(Date.parse(result.data.verificationExpiresAt) > Date.now());
+});
+
+test('enforces the resend cooldown without another provider request', async () => {
+  const existingUser = {
+    id: 'pending-user-id',
+    email: 'student@gsm.hs.kr',
+    email_confirmed_at: null,
+    created_at: new Date().toISOString(),
+  };
+  const { supabase, repository, dataGsm, resendRequests } = createDependencies({
+    existingAuthUsers: [existingUser],
+  });
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  await service.resendVerification('student@gsm.hs.kr');
+  await assert.rejects(
+    service.resendVerification('student@gsm.hs.kr'),
+    (error) => error.code === 'VERIFICATION_RESEND_TOO_SOON',
+  );
+  assert.equal(resendRequests.length, 1);
 });

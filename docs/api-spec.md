@@ -17,10 +17,21 @@ API 명세서 템플릿입니다.
 - 응답 형식은 JSON으로 통일한다.
 
 ## 1. 인증
+### POST /api/auth/signup
+- Data-GSM의 학교 이메일·학번 일치를 확인한 뒤 Supabase Auth 계정을 만든다.
+- 이메일 확인이 필요하면 토큰 대신 `verificationRequired`,
+  `verificationExpiresAt`, `resendAvailableAt`, `accountExpiresAt`을 반환한다.
+
 ### POST /api/auth/login
 - 로그인 요청을 받아 JWT 토큰을 발급한다.
 - request body: email, password
 - response body: accessToken, refreshToken, userInfo
+
+### POST /api/auth/resend-verification
+- 인증 대기 중인 GSM 계정에 가입 확인 메일을 다시 보낸다.
+- request body: email
+- 재전송은 60초 간격으로 제한하며, 24시간이 지난 미인증 계정은 삭제 후
+  `UNVERIFIED_ACCOUNT_EXPIRED`를 반환한다.
 
 ### POST /api/auth/refresh
 - refresh token으로 access token을 재발급한다.

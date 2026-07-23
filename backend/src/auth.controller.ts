@@ -21,6 +21,10 @@ type SignupRequest = LoginRequest & {
   agreements?: unknown;
 };
 
+type ResendVerificationRequest = {
+  email?: string;
+};
+
 @Controller('api/auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -39,6 +43,11 @@ export class AuthController {
   @Post('login')
   login(@Body() body: LoginRequest) {
     return this.authService.login(body?.email || '', body?.password || '');
+  }
+
+  @Post('resend-verification')
+  resendVerification(@Body() body: ResendVerificationRequest) {
+    return this.authService.resendVerification(body?.email || '');
   }
 
   @Post('logout')

@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'crypto';
+import {
+  createHmac,
+  randomBytes,
+  randomUUID,
+  scryptSync,
+  timingSafeEqual,
+} from 'crypto';
 import { z } from 'zod';
 import { ApiException } from './common/api-exception';
 import type { AuthenticatedUser } from './common/authenticated-user';
@@ -24,10 +30,36 @@ type MemoryUser = AuthenticatedUser & {
   passwordHash: string;
 };
 
+type VerificationMetadata = {
+  verificationRequired: true;
+  verificationExpiresAt: string;
+  resendAvailableAt: string;
+  accountExpiresAt: string;
+};
+
+const UNVERIFIED_ACCOUNT_TTL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_VERIFICATION_TTL_SECONDS = 60 * 60;
+const DEFAULT_RESEND_COOLDOWN_SECONDS = 60;
+
 @Injectable()
 export class AuthService {
   private readonly memoryUsers = new Map<string, MemoryUser>();
   private readonly memoryTokens = new Map<string, AuthenticatedUser>();
+  private readonly verificationCooldowns = new Map<string, number>();
+  private readonly verificationTtlSeconds = this.readBoundedInteger(
+    process.env.EMAIL_VERIFICATION_TTL_SECONDS,
+    DEFAULT_VERIFICATION_TTL_SECONDS,
+    300,
+    86_400,
+  );
+  private readonly resendCooldownSeconds = this.readBoundedInteger(
+    process.env.EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS,
+    DEFAULT_RESEND_COOLDOWN_SECONDS,
+    30,
+    3_600,
+  );
+  private readonly cooldownHmacKey =
+    process.env.CACHE_KEY_SECRET?.trim() || randomBytes(32).toString('hex');
   private readonly allowMemoryAuth =
     process.env.NODE_ENV !== 'production' &&
     process.env.ALLOW_IN_MEMORY_AUTH === 'true';
@@ -119,6 +151,22 @@ export class AuthService {
       );
     }
 
+    const existingUser = await this.findAuthUserByEmail(normalizedEmail);
+    if (existingUser && !existingUser.email_confirmed_at) {
+      const createdAt = this.parseTimestamp(existingUser.created_at);
+      if (this.isUnverifiedAccountExpired(createdAt)) {
+        await this.deleteAuthUser(existingUser.id);
+      } else {
+        return this.verificationPendingResponse(
+          existingUser.id,
+          normalizedEmail,
+          normalizedName,
+          createdAt,
+          this.parseTimestamp(existingUser.confirmation_sent_at),
+        );
+      }
+    }
+
     let result;
     try {
       const emailRedirectTo = this.resolveEmailRedirectUrl();
@@ -173,6 +221,7 @@ export class AuthService {
     }
 
     const session = result.data.session;
+    const verificationRequired = !result.data.user.email_confirmed_at;
     return {
       status: 'OK',
       data: {
@@ -185,7 +234,96 @@ export class AuthService {
           ? this.toPublicSession(session.access_token, session.refresh_token, session.expires_at)
           : null,
         token: session?.access_token || null,
-        verificationRequired: !result.data.user.email_confirmed_at,
+        verificationRequired,
+        ...(verificationRequired
+          ? this.createVerificationMetadata(
+              this.parseTimestamp(result.data.user.created_at),
+              this.parseTimestamp(result.data.user.confirmation_sent_at),
+            )
+          : {}),
+      },
+    };
+  }
+
+  async resendVerification(email: string) {
+    const normalizedEmail = this.parseEmail(email);
+    if (!this.supabase.hasAuthConfig || !this.supabase.hasDatabaseConfig) {
+      throw new ApiException(
+        'AUTH_NOT_CONFIGURED',
+        '인증 서비스가 구성되지 않았습니다.',
+        503,
+      );
+    }
+
+    const cooldownKey = this.createEmailCooldownKey(normalizedEmail);
+    const now = Date.now();
+    const cooldownUntil = this.verificationCooldowns.get(cooldownKey) || 0;
+    if (cooldownUntil > now) {
+      throw new ApiException(
+        'VERIFICATION_RESEND_TOO_SOON',
+        '잠시 후 인증 메일을 다시 요청해 주세요.',
+        429,
+      );
+    }
+
+    const user = await this.findAuthUserByEmail(normalizedEmail);
+    if (!user || user.email_confirmed_at) {
+      throw new ApiException(
+        'VERIFICATION_NOT_PENDING',
+        '인증 대기 중인 계정을 확인할 수 없습니다.',
+        400,
+      );
+    }
+
+    const createdAt = this.parseTimestamp(user.created_at);
+    if (this.isUnverifiedAccountExpired(createdAt)) {
+      await this.deleteAuthUser(user.id);
+      throw new ApiException(
+        'UNVERIFIED_ACCOUNT_EXPIRED',
+        '인증 대기 시간이 만료되어 계정을 정리했습니다. 다시 회원가입해 주세요.',
+        410,
+      );
+    }
+
+    let result;
+    try {
+      const emailRedirectTo = this.resolveEmailRedirectUrl();
+      result = await this.supabase.auth.auth.resend({
+        type: 'signup',
+        email: normalizedEmail,
+        options: emailRedirectTo ? { emailRedirectTo } : undefined,
+      });
+    } catch {
+      throw new ApiException(
+        'VERIFICATION_RESEND_FAILED',
+        '인증 메일을 보내지 못했습니다. 잠시 후 다시 시도해 주세요.',
+        503,
+      );
+    }
+
+    if (result.error) {
+      const isRateLimited =
+        result.error.status === 429 ||
+        result.error.message?.toLowerCase().includes('rate limit');
+      throw new ApiException(
+        isRateLimited
+          ? 'VERIFICATION_RESEND_TOO_SOON'
+          : 'VERIFICATION_RESEND_FAILED',
+        isRateLimited
+          ? '잠시 후 인증 메일을 다시 요청해 주세요.'
+          : '인증 메일을 보내지 못했습니다. 잠시 후 다시 시도해 주세요.',
+        isRateLimited ? 429 : 503,
+      );
+    }
+
+    this.verificationCooldowns.set(
+      cooldownKey,
+      now + this.resendCooldownSeconds * 1000,
+    );
+    return {
+      status: 'OK',
+      data: {
+        ...this.createVerificationMetadata(createdAt),
       },
     };
   }
@@ -352,6 +490,123 @@ export class AuthService {
       );
     }
     return parsed.data;
+  }
+
+  private verificationPendingResponse(
+    userId: string,
+    email: string,
+    name: string,
+    createdAt: number,
+    confirmationSentAt: number,
+  ) {
+    return {
+      status: 'OK',
+      data: {
+        user: { id: userId, email, name },
+        session: null,
+        token: null,
+        ...this.createVerificationMetadata(createdAt, confirmationSentAt),
+      },
+    };
+  }
+
+  private createVerificationMetadata(
+    accountCreatedAt: number,
+    sentAt = Date.now(),
+  ): VerificationMetadata {
+    return {
+      verificationRequired: true,
+      verificationExpiresAt: new Date(
+        sentAt + this.verificationTtlSeconds * 1000,
+      ).toISOString(),
+      resendAvailableAt: new Date(
+        sentAt + this.resendCooldownSeconds * 1000,
+      ).toISOString(),
+      accountExpiresAt: new Date(
+        accountCreatedAt + UNVERIFIED_ACCOUNT_TTL_MS,
+      ).toISOString(),
+    };
+  }
+
+  private async findAuthUserByEmail(email: string) {
+    try {
+      for (let page = 1; page <= 10; page += 1) {
+        const { data, error } =
+          await this.supabase.db.auth.admin.listUsers({
+            page,
+            perPage: 1000,
+          });
+        if (error) {
+          throw new ApiException(
+            'AUTH_PROVIDER_UNAVAILABLE',
+            '인증 서비스에 연결할 수 없습니다.',
+            503,
+          );
+        }
+
+        const users = data?.users || [];
+        const matched = users.find(
+          (user) => user.email?.trim().toLowerCase() === email,
+        );
+        if (matched) return matched;
+        if (users.length < 1000) break;
+      }
+      return null;
+    } catch (error) {
+      if (error instanceof ApiException) throw error;
+      throw new ApiException(
+        'AUTH_PROVIDER_UNAVAILABLE',
+        '인증 서비스에 연결할 수 없습니다.',
+        503,
+      );
+    }
+  }
+
+  private async deleteAuthUser(userId: string) {
+    try {
+      const { error } = await this.supabase.db.auth.admin.deleteUser(userId);
+      if (error) {
+        throw new ApiException(
+          'AUTH_PROVIDER_UNAVAILABLE',
+          '인증 서비스에 연결할 수 없습니다.',
+          503,
+        );
+      }
+    } catch (error) {
+      if (error instanceof ApiException) throw error;
+      throw new ApiException(
+        'AUTH_PROVIDER_UNAVAILABLE',
+        '인증 서비스에 연결할 수 없습니다.',
+        503,
+      );
+    }
+  }
+
+  private isUnverifiedAccountExpired(createdAt: number) {
+    return createdAt + UNVERIFIED_ACCOUNT_TTL_MS <= Date.now();
+  }
+
+  private parseTimestamp(value?: string) {
+    const timestamp = value ? Date.parse(value) : Number.NaN;
+    return Number.isFinite(timestamp) ? timestamp : Date.now();
+  }
+
+  private createEmailCooldownKey(email: string) {
+    return createHmac('sha256', this.cooldownHmacKey)
+      .update(email)
+      .digest('hex');
+  }
+
+  private readBoundedInteger(
+    rawValue: string | undefined,
+    fallback: number,
+    minimum: number,
+    maximum: number,
+  ) {
+    const parsed = Number.parseInt(rawValue || '', 10);
+    return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum
+      ? parsed
+      : fallback;
   }
 
   private toPublicSession(
