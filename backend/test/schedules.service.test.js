@@ -4,15 +4,15 @@ require('ts-node/register/transpile-only');
 
 const { SchedulesService } = require('../src/schedules.service');
 const {
-  seoulCurrentAndNextMonthRange,
+  seoulUpcomingScheduleRange,
 } = require('../src/seoul-date.util');
 
-test('uses today through the end of next month in Asia/Seoul', () => {
+test('uses a 90-day inclusive range in Asia/Seoul', () => {
   assert.deepEqual(
-    seoulCurrentAndNextMonthRange(new Date('2026-07-23T01:00:00.000Z')),
+    seoulUpcomingScheduleRange(new Date('2026-07-23T01:00:00.000Z')),
     {
       fromDate: '2026-07-23',
-      toDate: '2026-08-31',
+      toDate: '2026-10-20',
     },
   );
 });

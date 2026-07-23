@@ -7,7 +7,7 @@ import { TtlCache } from './data-gsm/ttl-cache';
 import { ProfileService, ResolvedProfile } from './profile.service';
 import {
   calendarDayDifference,
-  seoulCurrentAndNextMonthRange,
+  seoulUpcomingScheduleRange,
   seoulToday,
   validateDate,
 } from './seoul-date.util';
@@ -49,7 +49,7 @@ export class SchedulesService {
   ) {}
 
   defaultRange() {
-    return seoulCurrentAndNextMonthRange();
+    return seoulUpcomingScheduleRange();
   }
 
   async list(

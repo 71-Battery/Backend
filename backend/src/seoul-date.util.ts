@@ -57,11 +57,10 @@ export function addCalendarDays(date: string, days: number) {
   return `${result.getUTCFullYear()}-${String(result.getUTCMonth() + 1).padStart(2, '0')}-${String(result.getUTCDate()).padStart(2, '0')}`;
 }
 
-export function seoulCurrentAndNextMonthRange(now = new Date()) {
-  const today = validateDate(seoulToday(now), 'today');
-  const lastDayOfNextMonth = new Date(Date.UTC(today.year, today.month + 1, 0));
+export function seoulUpcomingScheduleRange(now = new Date()) {
+  const fromDate = seoulToday(now);
   return {
-    fromDate: `${today.year}-${String(today.month).padStart(2, '0')}-${String(today.day).padStart(2, '0')}`,
-    toDate: `${lastDayOfNextMonth.getUTCFullYear()}-${String(lastDayOfNextMonth.getUTCMonth() + 1).padStart(2, '0')}-${String(lastDayOfNextMonth.getUTCDate()).padStart(2, '0')}`,
+    fromDate,
+    toDate: addCalendarDays(fromDate, 89),
   };
 }
