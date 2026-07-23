@@ -7,11 +7,11 @@ const {
   seoulCurrentAndNextMonthRange,
 } = require('../src/seoul-date.util');
 
-test('uses the current and next calendar month in Asia/Seoul', () => {
+test('uses today through the end of next month in Asia/Seoul', () => {
   assert.deepEqual(
     seoulCurrentAndNextMonthRange(new Date('2026-07-23T01:00:00.000Z')),
     {
-      fromDate: '2026-07-01',
+      fromDate: '2026-07-23',
       toDate: '2026-08-31',
     },
   );
