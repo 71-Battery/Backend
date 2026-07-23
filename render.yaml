@@ -41,8 +41,8 @@ services:
         value: "3600"
       - key: CACHE_KEY_SECRET
         generateValue: true
-      - key: CAMPUS_AI_API_URL
-        sync: false
+      - key: AI_BASE_URL
+        value: http://54.177.28.241
       - key: CAMPUS_AI_TOP_K
         value: "4"
       - key: CAMPUS_AI_SCORE_THRESHOLD

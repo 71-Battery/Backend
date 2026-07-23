@@ -6,6 +6,7 @@ require('ts-node/register/transpile-only');
 const { CampusAiClient } = require('../src/campus-ai/campus-ai.client');
 
 const ENV_KEYS = [
+  'AI_BASE_URL',
   'CAMPUS_AI_API_URL',
   'CAMPUS_AI_TOP_K',
   'CAMPUS_AI_SCORE_THRESHOLD',
@@ -49,7 +50,8 @@ async function withCampusEnv(run) {
     ENV_KEYS.map((key) => [key, process.env[key]]),
   );
   const previousFetch = global.fetch;
-  process.env.CAMPUS_AI_API_URL = 'https://campus-ai.test';
+  process.env.AI_BASE_URL = 'https://campus-ai.test';
+  delete process.env.CAMPUS_AI_API_URL;
   process.env.CAMPUS_AI_TOP_K = '6';
   process.env.CAMPUS_AI_SCORE_THRESHOLD = '1.25';
   process.env.CAMPUS_AI_CONNECT_TIMEOUT = '5';
@@ -185,6 +187,7 @@ test('maps network failures and aborts to safe errors', async () => {
 
 test('rejects a public plaintext Campus AI origin', async () => {
   await withCampusEnv(async () => {
+    delete process.env.AI_BASE_URL;
     process.env.CAMPUS_AI_API_URL = 'http://campus-ai.test';
     let calls = 0;
     global.fetch = async () => {
@@ -199,6 +202,23 @@ test('rejects a public plaintext Campus AI origin', async () => {
         error.getStatus() === 503,
     );
     assert.equal(calls, 0);
+  });
+});
+
+test('accepts an explicitly configured public HTTP AI_BASE_URL', async () => {
+  await withCampusEnv(async () => {
+    process.env.AI_BASE_URL = 'http://54.177.28.241';
+    let capturedUrl;
+    global.fetch = async (url) => {
+      capturedUrl = new URL(url);
+      return new Response(JSON.stringify(response()), { status: 200 });
+    };
+
+    const client = new CampusAiClient();
+    const result = await client.chat('AI 연결 확인', trustedProfile);
+
+    assert.equal(capturedUrl.href, 'http://54.177.28.241/v1/chat');
+    assert.equal(result.answer, '현장실습 안내입니다.');
   });
 });
 
@@ -230,7 +250,7 @@ test('works through the configured dispatcher against a loopback service', async
 
   try {
     await withCampusEnv(async () => {
-      process.env.CAMPUS_AI_API_URL = `http://127.0.0.1:${address.port}`;
+      process.env.AI_BASE_URL = `http://127.0.0.1:${address.port}`;
       const client = new CampusAiClient();
       try {
         const result = await client.chat('로컬 통합 확인', trustedProfile);

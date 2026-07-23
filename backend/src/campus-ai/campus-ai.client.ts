@@ -41,7 +41,11 @@ const CAMPUS_AI_ERRORS: Record<string, CampusAiErrorDefinition> = {
 
 @Injectable()
 export class CampusAiClient implements OnModuleDestroy {
-  private readonly baseUrl = process.env.CAMPUS_AI_API_URL?.trim() || '';
+  private readonly explicitBaseUrl = process.env.AI_BASE_URL?.trim() || '';
+  private readonly baseUrl =
+    this.explicitBaseUrl ||
+    process.env.CAMPUS_AI_API_URL?.trim() ||
+    '';
   private readonly topK = this.parseInteger(
     process.env.CAMPUS_AI_TOP_K,
     4,
@@ -144,11 +148,9 @@ export class CampusAiClient implements OnModuleDestroy {
   }
 
   private chatUrl() {
-    let url: URL;
+    let baseUrl: URL;
     try {
-      url = new URL(
-        `${this.baseUrl.replace(/\/+$/, '')}/v1/chat`,
-      );
+      baseUrl = new URL(this.baseUrl);
     } catch {
       throw new ApiException(
         'CAMPUS_AI_NOT_CONFIGURED',
@@ -158,10 +160,13 @@ export class CampusAiClient implements OnModuleDestroy {
     }
 
     if (
-      (url.protocol !== 'https:' && url.protocol !== 'http:') ||
-      url.hostname.endsWith('.example.com') ||
-      url.username ||
-      url.password
+      (baseUrl.protocol !== 'https:' && baseUrl.protocol !== 'http:') ||
+      baseUrl.hostname.endsWith('.example.com') ||
+      baseUrl.username ||
+      baseUrl.password ||
+      (baseUrl.pathname !== '/' && baseUrl.pathname !== '') ||
+      baseUrl.search ||
+      baseUrl.hash
     ) {
       throw new ApiException(
         'CAMPUS_AI_NOT_CONFIGURED',
@@ -170,12 +175,13 @@ export class CampusAiClient implements OnModuleDestroy {
       );
     }
     const isLoopback =
-      url.hostname === 'localhost' ||
-      url.hostname === '127.0.0.1' ||
-      url.hostname === '[::1]';
+      baseUrl.hostname === 'localhost' ||
+      baseUrl.hostname === '127.0.0.1' ||
+      baseUrl.hostname === '[::1]';
     if (
-      url.protocol === 'http:' &&
-      (process.env.NODE_ENV === 'production' || !isLoopback)
+      baseUrl.protocol === 'http:' &&
+      !isLoopback &&
+      !this.explicitBaseUrl
     ) {
       throw new ApiException(
         'CAMPUS_AI_INSECURE_URL',
@@ -183,7 +189,8 @@ export class CampusAiClient implements OnModuleDestroy {
         503,
       );
     }
-    return url;
+
+    return new URL('/v1/chat', baseUrl);
   }
 
   private parseJson(value: string): unknown {

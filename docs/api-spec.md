@@ -43,6 +43,15 @@ API 명세서 템플릿입니다.
 - response body: answer, sources, status
 - 실패 응답: 400(잘못된 요청), 401(인증 실패), 500(서버 오류)
 
+### POST /api/v1/chat
+- 프런트엔드는 인증 토큰과 `query`만 전송한다.
+- 백엔드가 인증된 학생 프로필의 학년·학과를 조회한 뒤
+  `${AI_BASE_URL}/v1/chat`을 호출한다.
+- AI 응답의 `answer`, `sources`, `has_context`를 검증해 프런트엔드에
+  반환한다.
+- `AI_BASE_URL`은 백엔드 Render 환경변수로만 관리하며 프런트엔드에는
+  설정하지 않는다.
+
 ## 3. 학사 정보 조회
 ### GET /api/guidance
 - 학년과 학과를 기준으로 맞춤형 학사 가이드를 반환한다.
