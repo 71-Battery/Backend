@@ -205,20 +205,22 @@ test('rejects a public plaintext Campus AI origin', async () => {
   });
 });
 
-test('accepts an explicitly configured public HTTP AI_BASE_URL', async () => {
+test('rejects an explicitly configured public HTTP AI_BASE_URL', async () => {
   await withCampusEnv(async () => {
-    process.env.AI_BASE_URL = 'http://54.177.28.241';
-    let capturedUrl;
-    global.fetch = async (url) => {
-      capturedUrl = new URL(url);
-      return new Response(JSON.stringify(response()), { status: 200 });
+    process.env.AI_BASE_URL = 'http://public-ai.test';
+    let calls = 0;
+    global.fetch = async () => {
+      calls += 1;
+      return new Response();
     };
 
-    const client = new CampusAiClient();
-    const result = await client.chat('AI 연결 확인', trustedProfile);
-
-    assert.equal(capturedUrl.href, 'http://54.177.28.241/v1/chat');
-    assert.equal(result.answer, '현장실습 안내입니다.');
+    await assert.rejects(
+      new CampusAiClient().chat('AI 연결 확인', trustedProfile),
+      (error) =>
+        error.code === 'CAMPUS_AI_INSECURE_URL' &&
+        error.getStatus() === 503,
+    );
+    assert.equal(calls, 0);
   });
 });
 

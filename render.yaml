@@ -42,7 +42,7 @@ services:
       - key: CACHE_KEY_SECRET
         generateValue: true
       - key: AI_BASE_URL
-        value: http://54.177.28.241
+        value: https://api.71battery.p-e.kr
       - key: CAMPUS_AI_TOP_K
         value: "4"
       - key: CAMPUS_AI_SCORE_THRESHOLD

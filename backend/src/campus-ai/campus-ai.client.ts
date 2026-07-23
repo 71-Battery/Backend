@@ -180,8 +180,7 @@ export class CampusAiClient implements OnModuleDestroy {
       baseUrl.hostname === '[::1]';
     if (
       baseUrl.protocol === 'http:' &&
-      !isLoopback &&
-      !this.explicitBaseUrl
+      (process.env.NODE_ENV === 'production' || !isLoopback)
     ) {
       throw new ApiException(
         'CAMPUS_AI_INSECURE_URL',
