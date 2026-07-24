@@ -45,6 +45,18 @@ const appRoleSchema = z.object({
   appRole: z.enum(['STUDENT', 'CONTENT_EDITOR', 'ADMIN']),
 });
 
+const regulationIdSchema = z
+  .string()
+  .trim()
+  .max(64)
+  .refine((value) => {
+    const unprefixedId = value.startsWith('rule-') ? value.slice(5) : value;
+    return (
+      z.string().uuid().safeParse(unprefixedId).success ||
+      /^\d{10,16}$/.test(unprefixedId)
+    );
+  });
+
 function parseRule(body: unknown): {
   title: string;
   content: string;
@@ -160,7 +172,7 @@ export class AdminController {
     @Param('ruleId') ruleId: string,
     @Body() body: unknown,
   ) {
-    const parsedId = z.string().uuid().safeParse(ruleId);
+    const parsedId = regulationIdSchema.safeParse(ruleId);
     if (!parsedId.success) {
       throw new ApiException(
         'INVALID_REGULATION',
@@ -182,7 +194,7 @@ export class AdminController {
 
   @Delete('rules/:ruleId')
   async deleteRule(@Param('ruleId') ruleId: string) {
-    const parsedId = z.string().uuid().safeParse(ruleId);
+    const parsedId = regulationIdSchema.safeParse(ruleId);
     if (!parsedId.success) {
       throw new ApiException(
         'INVALID_REGULATION',

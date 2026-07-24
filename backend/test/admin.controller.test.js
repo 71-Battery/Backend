@@ -177,7 +177,7 @@ test('sanitizes a notice before publishing it', async () => {
   });
 });
 
-test('updates and deletes a validated regulation id', async () => {
+test('updates and deletes a validated prefixed regulation id', async () => {
   const calls = [];
   const controller = new AdminController({
     updateRegulation: async (id, input) => {
@@ -186,7 +186,7 @@ test('updates and deletes a validated regulation id', async () => {
     },
     deleteRegulation: async (id) => calls.push(['delete', id]),
   });
-  const id = 'db742cb0-f333-4b7b-a214-9444c23da582';
+  const id = 'rule-db742cb0-f333-4b7b-a214-9444c23da582';
 
   await controller.updateRule(id, {
     title: '수정 규정',
