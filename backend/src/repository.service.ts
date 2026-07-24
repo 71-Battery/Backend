@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { ApiException } from './common/api-exception';
+import {
+  sanitizeAdminContent,
+  sanitizeAdminPlainText,
+} from './content-sanitizer';
 import { SupabaseService } from './supabase.service';
 
 export type ResourceType = 'SCHEDULE' | 'NOTICE' | 'RULE';
@@ -482,11 +486,13 @@ export class RepositoryService {
   private mapNotice(row: Record<string, any>): NoticeRow {
     return {
       id: String(row.id),
-      title: String(row.title),
-      summary: String(row.summary || ''),
-      content: String(row.content),
-      category: String(row.category || '일반'),
-      department: this.nullableString(row.department),
+      title: sanitizeAdminPlainText(String(row.title)),
+      summary: sanitizeAdminPlainText(String(row.summary || '')),
+      content: sanitizeAdminContent(String(row.content)),
+      category: sanitizeAdminPlainText(String(row.category || '일반')),
+      department: row.department
+        ? sanitizeAdminPlainText(String(row.department))
+        : null,
       publishedAt: String(row.published_at),
       deadlineAt: this.nullableString(row.deadline_at),
       targetGrades: this.numberArray(row.target_grades),
