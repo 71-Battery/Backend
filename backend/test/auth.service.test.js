@@ -9,6 +9,7 @@ function createDependencies({
   studentLookupError = null,
   existingAuthUsers = [],
   authUserOverrides = {},
+  signupError = null,
 } = {}) {
   const signupRequests = [];
   const resendRequests = [];
@@ -37,7 +38,7 @@ function createDependencies({
               }
             : null,
         },
-        error: null,
+        error: signupError,
       };
     },
     signInWithPassword: async () => ({
@@ -359,6 +360,30 @@ test('returns verification timing metadata for a new unconfirmed account', async
   assert.ok(Date.parse(result.data.verificationExpiresAt) > Date.now());
   assert.ok(Date.parse(result.data.resendAvailableAt) > Date.now());
   assert.ok(Date.parse(result.data.accountExpiresAt) > Date.now());
+});
+
+test('preserves the verification email rate limit response from Supabase', async () => {
+  const { supabase, repository, dataGsm, profileSetups } = createDependencies({
+    signupError: {
+      status: 429,
+      message: 'email rate limit exceeded',
+    },
+  });
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  await assert.rejects(
+    service.signup(
+      'student@gsm.hs.kr',
+      'password123',
+      'Test Student',
+      2103,
+      { terms: true, privacy: true },
+    ),
+    (error) =>
+      error.code === 'VERIFICATION_EMAIL_RATE_LIMITED' &&
+      error.getStatus() === 429,
+  );
+  assert.equal(profileSetups.length, 0);
 });
 
 test('keeps a recent unconfirmed account available without signing up twice', async () => {

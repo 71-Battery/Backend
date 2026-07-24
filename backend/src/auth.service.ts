@@ -186,6 +186,22 @@ export class AuthService {
       );
     }
 
+    if (result.error) {
+      const errorMessage = result.error.message?.toLowerCase() || '';
+      const isEmailRateLimited =
+        result.error.status === 429 ||
+        errorMessage.includes('rate limit') ||
+        errorMessage.includes('email send rate');
+
+      if (isEmailRateLimited) {
+        throw new ApiException(
+          'VERIFICATION_EMAIL_RATE_LIMITED',
+          '인증 메일 요청 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.',
+          429,
+        );
+      }
+    }
+
     if (
       result.error ||
       !result.data.user ||
