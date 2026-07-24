@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { ApiException } from './common/api-exception';
 import type { AuthenticatedUser } from './common/authenticated-user';
 import { DataGsmClient } from './data-gsm/data-gsm.client';
+import type { DataGsmStudent } from './data-gsm/data-gsm.schemas';
 import { RepositoryService } from './repository.service';
 import { SupabaseService } from './supabase.service';
 
@@ -94,7 +95,7 @@ export class AuthService {
       .number()
       .int()
       .min(1000)
-      .max(99_999_999)
+      .max(9999)
       .safeParse(studentNumberValue);
     const agreements = z
       .object({
@@ -106,7 +107,7 @@ export class AuthService {
     if (!studentNumber.success) {
       throw new ApiException(
         'INVALID_STUDENT_NUMBER',
-        '학번은 숫자 4~8자리로 입력해 주세요.',
+        '학번은 4자리로 구성됩니다.',
         400,
       );
     }
@@ -118,23 +119,27 @@ export class AuthService {
       );
     }
 
-    await this.verifyStudentIdentity(normalizedEmail, studentNumber.data);
+    const verifiedStudent = await this.verifyStudentIdentity(
+      normalizedEmail,
+      studentNumber.data,
+      normalizedName,
+    );
+    const canonicalName = this.canonicalStudentName(verifiedStudent.name);
 
     if (!this.supabase.hasAuthConfig) {
       if (this.allowMemoryAuth) {
         const response = this.memorySignup(
           normalizedEmail,
           password,
-          normalizedName,
+          canonicalName,
         );
-        await this.repository.createSignupProfile({
-          userId: response.data.user.id,
-          name: normalizedName,
-          studentNumber: studentNumber.data,
-          termsAccepted: true,
-          privacyAccepted: true,
-          notificationsEnabled: agreements.data.notifications,
-        });
+        await this.repository.createSignupProfile(
+          this.createSignupProfileInput(
+            response.data.user.id,
+            verifiedStudent,
+            agreements.data.notifications,
+          ),
+        );
         return response;
       }
       throw new ApiException(
@@ -151,20 +156,41 @@ export class AuthService {
       );
     }
 
-    const existingUser = await this.findAuthUserByEmail(normalizedEmail);
+    let existingUser = await this.findAuthUserByEmail(normalizedEmail);
+    if (
+      existingUser &&
+      !(await this.repository.hasAppProfile(existingUser.id))
+    ) {
+      await this.deleteAuthUser(existingUser.id);
+      existingUser = null;
+    }
+
     if (existingUser && !existingUser.email_confirmed_at) {
       const createdAt = this.parseTimestamp(existingUser.created_at);
       if (this.isUnverifiedAccountExpired(createdAt)) {
         await this.deleteAuthUser(existingUser.id);
       } else {
+        await this.syncCanonicalIdentity(
+          existingUser.id,
+          existingUser.user_metadata,
+          verifiedStudent,
+        );
         return this.verificationPendingResponse(
           existingUser.id,
           normalizedEmail,
-          normalizedName,
+          canonicalName,
           createdAt,
           this.parseTimestamp(existingUser.confirmation_sent_at),
         );
       }
+    }
+
+    if (existingUser?.email_confirmed_at) {
+      throw new ApiException(
+        'ACCOUNT_ALREADY_EXISTS',
+        '이미 가입된 계정입니다. 로그인해 주세요.',
+        409,
+      );
     }
 
     let result;
@@ -174,7 +200,7 @@ export class AuthService {
         email: normalizedEmail,
         password,
         options: {
-          data: normalizedName ? { name: normalizedName } : {},
+          data: { name: canonicalName },
           ...(emailRedirectTo ? { emailRedirectTo } : {}),
         },
       });
@@ -217,14 +243,13 @@ export class AuthService {
     }
 
     try {
-      await this.repository.createSignupProfile({
-        userId: result.data.user.id,
-        name: normalizedName,
-        studentNumber: studentNumber.data,
-        termsAccepted: true,
-        privacyAccepted: true,
-        notificationsEnabled: agreements.data.notifications,
-      });
+      await this.repository.createSignupProfile(
+        this.createSignupProfileInput(
+          result.data.user.id,
+          verifiedStudent,
+          agreements.data.notifications,
+        ),
+      );
     } catch (error) {
       // Supabase Auth and PostgREST cannot share one transaction. Remove only
       // the user created by this request when profile provisioning fails.
@@ -244,7 +269,7 @@ export class AuthService {
         user: {
           id: result.data.user.id,
           email: normalizedEmail,
-          name: normalizedName,
+          name: canonicalName,
         },
         session: session
           ? this.toPublicSession(session.access_token, session.refresh_token, session.expires_at)
@@ -402,16 +427,37 @@ export class AuthService {
       );
     }
 
+    if (!(await this.repository.hasAppProfile(result.data.user.id))) {
+      await this.deleteAuthUser(result.data.user.id);
+      throw new ApiException(
+        'ACCOUNT_REMOVED',
+        '삭제된 계정입니다. 다시 회원가입해 주세요.',
+        410,
+      );
+    }
+
+    const student = await this.dataGsm.getStudentByEmail(verifiedEmail);
+    if (!student) {
+      throw new ApiException(
+        'STUDENT_PROFILE_NOT_FOUND',
+        '등록된 재학생 정보를 찾을 수 없습니다.',
+        404,
+      );
+    }
+    await this.syncCanonicalIdentity(
+      result.data.user.id,
+      result.data.user.user_metadata,
+      student,
+    );
+    const canonicalName = this.canonicalStudentName(student.name);
+
     return {
       status: 'OK',
       data: {
         user: {
           id: result.data.user.id,
           email: verifiedEmail,
-          name:
-            typeof result.data.user.user_metadata?.name === 'string'
-              ? result.data.user.user_metadata.name
-              : '',
+          name: canonicalName,
         },
         session: this.toPublicSession(
           result.data.session.access_token,
@@ -478,8 +524,15 @@ export class AuthService {
       if (error || !data.user?.email || !data.user.email_confirmed_at) return null;
 
       const email = this.parseEmail(data.user.email);
+      if (!(await this.repository.hasAppProfile(data.user.id))) {
+        await this.deleteAuthUser(data.user.id);
+        return null;
+      }
       return { id: data.user.id, email };
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiException && error.getStatus() >= 500) {
+        throw error;
+      }
       return null;
     }
   }
@@ -656,15 +709,126 @@ export class AuthService {
     return this.memorySessionResponse(user);
   }
 
-  private async verifyStudentIdentity(email: string, studentNumber: number) {
+  private async verifyStudentIdentity(
+    email: string,
+    studentNumber: number,
+    name: string,
+  ): Promise<DataGsmStudent> {
     const student = await this.dataGsm.getStudentByEmail(email);
-    if (!student || student.studentNumber !== studentNumber) {
+    const studentEmail =
+      typeof student?.email === 'string'
+        ? student.email.trim().toLowerCase()
+        : '';
+    const nameMatches =
+      student &&
+      this.comparableStudentName(student.name) ===
+        this.comparableStudentName(name);
+    if (
+      !student ||
+      studentEmail !== email ||
+      student.studentNumber !== studentNumber ||
+      !nameMatches
+    ) {
       throw new ApiException(
         'STUDENT_IDENTITY_MISMATCH',
-        '학교 이메일과 학번이 재학생 정보와 일치하지 않습니다.',
+        '이름, 학번 또는 학교 이메일이 재학생 정보와 일치하지 않습니다.',
         400,
       );
     }
+    return student;
+  }
+
+  private createSignupProfileInput(
+    userId: string,
+    student: DataGsmStudent,
+    notificationsEnabled: boolean,
+  ) {
+    if (student.studentNumber === null) {
+      throw new ApiException(
+        'DATA_PROVIDER_INVALID_RESPONSE',
+        '학생 정보 응답을 확인할 수 없습니다.',
+        502,
+      );
+    }
+
+    return {
+      userId,
+      dataGsmStudentId: String(student.id),
+      name: this.canonicalStudentName(student.name),
+      grade: student.grade,
+      classNum: student.classNum,
+      number: student.number,
+      studentNumber: student.studentNumber,
+      major: student.major,
+      specialty: student.specialty,
+      dataGsmRole: student.role,
+      termsAccepted: true,
+      privacyAccepted: true,
+      notificationsEnabled,
+    };
+  }
+
+  private async syncCanonicalIdentity(
+    userId: string,
+    userMetadata: unknown,
+    student: DataGsmStudent,
+  ) {
+    const canonicalName = this.canonicalStudentName(student.name);
+    await this.repository.saveProfileSnapshot(userId, {
+      id: String(student.id),
+      name: canonicalName,
+      grade: student.grade,
+      classNum: student.classNum,
+      number: student.number,
+      studentNumber: student.studentNumber,
+      major: student.major,
+      specialty: student.specialty,
+      role: student.role,
+    });
+
+    const metadata =
+      userMetadata && typeof userMetadata === 'object'
+        ? (userMetadata as Record<string, unknown>)
+        : {};
+    if (
+      typeof metadata.name === 'string' &&
+      this.comparableStudentName(metadata.name) ===
+        this.comparableStudentName(canonicalName)
+    ) {
+      return;
+    }
+
+    try {
+      const { error } =
+        await this.supabase.db.auth.admin.updateUserById(userId, {
+          user_metadata: {
+            ...metadata,
+            name: canonicalName,
+          },
+        });
+      if (error) {
+        throw new ApiException(
+          'AUTH_PROVIDER_UNAVAILABLE',
+          '인증 서비스에 연결할 수 없습니다.',
+          503,
+        );
+      }
+    } catch (error) {
+      if (error instanceof ApiException) throw error;
+      throw new ApiException(
+        'AUTH_PROVIDER_UNAVAILABLE',
+        '인증 서비스에 연결할 수 없습니다.',
+        503,
+      );
+    }
+  }
+
+  private canonicalStudentName(value: string) {
+    return value.trim().normalize('NFC');
+  }
+
+  private comparableStudentName(value: string) {
+    return this.canonicalStudentName(value).replace(/\s+/gu, '');
   }
 
   private resolveEmailRedirectUrl() {

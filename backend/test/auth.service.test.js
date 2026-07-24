@@ -4,17 +4,32 @@ require('ts-node/register/transpile-only');
 
 const { AuthService } = require('../src/auth.service');
 
+const DATA_GSM_STUDENT = {
+  id: 'data-gsm-student-id',
+  name: '홍길동',
+  email: 'student@gsm.hs.kr',
+  grade: 2,
+  classNum: 1,
+  number: 3,
+  studentNumber: 2103,
+  major: 'SW_DEVELOPMENT',
+  specialty: '백엔드',
+  role: 'GENERAL_STUDENT',
+};
+
 function createDependencies({
-  student = { studentNumber: 2103 },
+  student = DATA_GSM_STUDENT,
   studentLookupError = null,
   existingAuthUsers = [],
   authUserOverrides = {},
   signupError = null,
+  profileExists = true,
 } = {}) {
   const signupRequests = [];
   const resendRequests = [];
   const signOutRequests = [];
   const deletedUserIds = [];
+  const updatedUserRequests = [];
   const studentLookupEmails = [];
   const user = {
     id: '5e08bc27-2cbd-4a26-a876-733c25de5f09',
@@ -85,13 +100,22 @@ function createDependencies({
             deletedUserIds.push(userId);
             return { error: null };
           },
+          updateUserById: async (userId, attributes) => {
+            updatedUserRequests.push({ userId, attributes });
+            return { data: { user: { ...user, ...attributes } }, error: null };
+          },
         },
       },
     },
   };
   const profileSetups = [];
+  const profileSnapshots = [];
   const repository = {
     createSignupProfile: async (input) => profileSetups.push(input),
+    hasAppProfile: async () => profileExists,
+    saveProfileSnapshot: async (userId, input) => {
+      profileSnapshots.push({ userId, input });
+    },
   };
   const dataGsm = {
     getStudentByEmail: async (email) => {
@@ -109,7 +133,9 @@ function createDependencies({
     resendRequests,
     signOutRequests,
     deletedUserIds,
+    updatedUserRequests,
     studentLookupEmails,
+    profileSnapshots,
   };
 }
 
@@ -119,6 +145,7 @@ test('signs up a verified-domain account and creates its local profile', async (
     repository,
     dataGsm,
     profileSetups,
+    signupRequests,
     studentLookupEmails,
   } = createDependencies();
   const service = new AuthService(supabase, repository, dataGsm);
@@ -126,7 +153,7 @@ test('signs up a verified-domain account and creates its local profile', async (
   const result = await service.signup(
     'Student@GSM.HS.KR',
     'password123',
-    '홍길동',
+    '홍 길동',
     2103,
     { terms: true, privacy: true, notifications: false },
   );
@@ -136,6 +163,9 @@ test('signs up a verified-domain account and creates its local profile', async (
   assert.equal(result.data.session.accessToken, 'access-token');
   assert.equal(profileSetups.length, 1);
   assert.equal(profileSetups[0].studentNumber, 2103);
+  assert.equal(profileSetups[0].name, '홍길동');
+  assert.equal(profileSetups[0].dataGsmStudentId, 'data-gsm-student-id');
+  assert.equal(signupRequests[0].options.data.name, '홍길동');
   assert.deepEqual(studentLookupEmails, ['student@gsm.hs.kr']);
 });
 
@@ -163,7 +193,7 @@ test('uses the deployed frontend origin for verification email redirects', async
   await service.signup(
     'student@gsm.hs.kr',
     'password123',
-    'Test Student',
+    '홍길동',
     2103,
     { terms: true, privacy: true },
   );
@@ -174,6 +204,33 @@ test('uses the deployed frontend origin for verification email redirects', async
   );
 });
 
+test('rejects a student number that is not exactly four digits', async () => {
+  const {
+    supabase,
+    repository,
+    dataGsm,
+    signupRequests,
+    studentLookupEmails,
+  } = createDependencies();
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  await assert.rejects(
+    service.signup(
+      'student@gsm.hs.kr',
+      'password123',
+      '홍길동',
+      21031,
+      { terms: true, privacy: true },
+    ),
+    (error) =>
+      error.code === 'INVALID_STUDENT_NUMBER' &&
+      error.message === '학번은 4자리로 구성됩니다.',
+  );
+
+  assert.equal(signupRequests.length, 0);
+  assert.equal(studentLookupEmails.length, 0);
+});
+
 test('rejects a mismatched student number before creating an auth user', async () => {
   const {
     supabase,
@@ -181,14 +238,74 @@ test('rejects a mismatched student number before creating an auth user', async (
     dataGsm,
     signupRequests,
     profileSetups,
-  } = createDependencies({ student: { studentNumber: 2201 } });
+  } = createDependencies({
+    student: {
+      ...DATA_GSM_STUDENT,
+      studentNumber: 2201,
+    },
+  });
   const service = new AuthService(supabase, repository, dataGsm);
 
   await assert.rejects(
     service.signup(
       'student@gsm.hs.kr',
       'password123',
-      'Test Student',
+      '홍길동',
+      2103,
+      { terms: true, privacy: true },
+    ),
+    (error) => error.code === 'STUDENT_IDENTITY_MISMATCH',
+  );
+
+  assert.equal(signupRequests.length, 0);
+  assert.equal(profileSetups.length, 0);
+});
+
+test('rejects a mismatched student name before creating an auth user', async () => {
+  const {
+    supabase,
+    repository,
+    dataGsm,
+    signupRequests,
+    profileSetups,
+  } = createDependencies();
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  await assert.rejects(
+    service.signup(
+      'student@gsm.hs.kr',
+      'password123',
+      '다른학생',
+      2103,
+      { terms: true, privacy: true },
+    ),
+    (error) => error.code === 'STUDENT_IDENTITY_MISMATCH',
+  );
+
+  assert.equal(signupRequests.length, 0);
+  assert.equal(profileSetups.length, 0);
+});
+
+test('rejects a Data-GSM response with a different email', async () => {
+  const {
+    supabase,
+    repository,
+    dataGsm,
+    signupRequests,
+    profileSetups,
+  } = createDependencies({
+    student: {
+      ...DATA_GSM_STUDENT,
+      email: 'another@gsm.hs.kr',
+    },
+  });
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  await assert.rejects(
+    service.signup(
+      'student@gsm.hs.kr',
+      'password123',
+      '홍길동',
       2103,
       { terms: true, privacy: true },
     ),
@@ -213,7 +330,7 @@ test('rejects a student missing from Data-GSM before creating an auth user', asy
     service.signup(
       'student@gsm.hs.kr',
       'password123',
-      'Test Student',
+      '홍길동',
       2103,
       { terms: true, privacy: true },
     ),
@@ -284,6 +401,68 @@ test('logs in and verifies the Supabase access token', async () => {
     email: 'student@gsm.hs.kr',
   });
   assert.equal(rejected, null);
+});
+
+test('synchronizes the canonical Data-GSM identity during login', async () => {
+  const {
+    supabase,
+    repository,
+    dataGsm,
+    profileSnapshots,
+    updatedUserRequests,
+  } = createDependencies({
+    authUserOverrides: {
+      user_metadata: { name: '첫 가입 이름', retained: true },
+    },
+  });
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  const result = await service.login('student@gsm.hs.kr', 'password123');
+
+  assert.equal(result.data.user.name, '홍길동');
+  assert.equal(profileSnapshots.length, 1);
+  assert.equal(profileSnapshots[0].input.name, '홍길동');
+  assert.equal(profileSnapshots[0].input.studentNumber, 2103);
+  assert.deepEqual(updatedUserRequests, [
+    {
+      userId: '5e08bc27-2cbd-4a26-a876-733c25de5f09',
+      attributes: {
+        user_metadata: {
+          name: '홍길동',
+          retained: true,
+        },
+      },
+    },
+  ]);
+});
+
+test('removes an orphaned Auth user when its app profile is missing at login', async () => {
+  const { supabase, repository, dataGsm, deletedUserIds } =
+    createDependencies({ profileExists: false });
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  await assert.rejects(
+    service.login('student@gsm.hs.kr', 'password123'),
+    (error) =>
+      error.code === 'ACCOUNT_REMOVED' &&
+      error.getStatus() === 410,
+  );
+  assert.deepEqual(deletedUserIds, [
+    '5e08bc27-2cbd-4a26-a876-733c25de5f09',
+  ]);
+});
+
+test('removes an orphaned Auth user while verifying a stored access token', async () => {
+  const { supabase, repository, dataGsm, deletedUserIds } =
+    createDependencies({ profileExists: false });
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  const result = await service.verifyAccessToken('access-token');
+
+  assert.equal(result, null);
+  assert.deepEqual(deletedUserIds, [
+    '5e08bc27-2cbd-4a26-a876-733c25de5f09',
+  ]);
 });
 
 test('revokes the current Supabase session during logout', async () => {
@@ -375,7 +554,7 @@ test('preserves the verification email rate limit response from Supabase', async
     service.signup(
       'student@gsm.hs.kr',
       'password123',
-      'Test Student',
+      '홍길동',
       2103,
       { terms: true, privacy: true },
     ),
@@ -415,6 +594,69 @@ test('keeps a recent unconfirmed account available without signing up twice', as
   assert.equal(result.data.verificationRequired, true);
   assert.equal(signupRequests.length, 0);
   assert.equal(profileSetups.length, 0);
+});
+
+test('removes an orphaned pending Auth user and creates a complete account', async () => {
+  const existingUser = {
+    id: 'orphaned-user-id',
+    email: 'student@gsm.hs.kr',
+    email_confirmed_at: null,
+    created_at: new Date().toISOString(),
+  };
+  const {
+    supabase,
+    repository,
+    dataGsm,
+    signupRequests,
+    profileSetups,
+    deletedUserIds,
+  } = createDependencies({
+    existingAuthUsers: [existingUser],
+    profileExists: false,
+  });
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  await service.signup(
+    'student@gsm.hs.kr',
+    'password123',
+    '홍길동',
+    2103,
+    { terms: true, privacy: true },
+  );
+
+  assert.deepEqual(deletedUserIds, ['orphaned-user-id']);
+  assert.equal(signupRequests.length, 1);
+  assert.equal(profileSetups.length, 1);
+});
+
+test('returns a clear conflict for an existing complete account', async () => {
+  const existingUser = {
+    id: 'existing-user-id',
+    email: 'student@gsm.hs.kr',
+    email_confirmed_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+  };
+  const {
+    supabase,
+    repository,
+    dataGsm,
+    signupRequests,
+  } = createDependencies({ existingAuthUsers: [existingUser] });
+  const service = new AuthService(supabase, repository, dataGsm);
+
+  await assert.rejects(
+    service.signup(
+      'student@gsm.hs.kr',
+      'password123',
+      '홍길동',
+      2103,
+      { terms: true, privacy: true },
+    ),
+    (error) =>
+      error.code === 'ACCOUNT_ALREADY_EXISTS' &&
+      error.getStatus() === 409,
+  );
+  assert.equal(signupRequests.length, 0);
 });
 
 test('deletes an expired unconfirmed account before creating it again', async () => {

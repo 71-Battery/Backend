@@ -66,8 +66,15 @@ export class RepositoryService {
 
   async createSignupProfile(input: {
     userId: string;
+    dataGsmStudentId: string;
     name: string;
+    grade: number | null;
+    classNum: number | null;
+    number: number | null;
     studentNumber: number;
+    major: 'SW_DEVELOPMENT' | 'SMART_IOT' | 'AI' | null;
+    specialty: string | null;
+    dataGsmRole: string | null;
     termsAccepted: boolean;
     privacyAccepted: boolean;
     notificationsEnabled: boolean;
@@ -81,15 +88,15 @@ export class RepositoryService {
         interests: [],
       });
       this.memoryFallbacks.set(input.userId, {
-        dataGsmStudentId: null,
+        dataGsmStudentId: input.dataGsmStudentId,
         name: input.name || null,
-        grade: null,
-        classNum: null,
-        number: null,
+        grade: input.grade,
+        classNum: input.classNum,
+        number: input.number,
         studentNumber: input.studentNumber,
-        major: null,
-        specialty: null,
-        dataGsmRole: null,
+        major: input.major,
+        specialty: input.specialty,
+        dataGsmRole: input.dataGsmRole,
       });
       return;
     }
@@ -116,9 +123,17 @@ export class RepositoryService {
         .upsert(
           {
             user_id: input.userId,
+            data_gsm_student_id: input.dataGsmStudentId,
             name: input.name || null,
+            grade: input.grade,
+            class_num: input.classNum,
+            number: input.number,
             student_number: input.studentNumber,
-            source: 'LOCAL_PROFILE',
+            major: input.major,
+            specialty: input.specialty,
+            data_gsm_role: input.dataGsmRole,
+            source: 'DATA_GSM_SNAPSHOT',
+            data_gsm_synced_at: now,
           },
           { onConflict: 'user_id' },
         );
@@ -187,13 +202,15 @@ export class RepositoryService {
   async getAppProfile(userId: string): Promise<AppProfileRow> {
     if (!this.supabase.hasDatabaseConfig) {
       this.assertMemoryAllowed();
-      return (
-        this.memoryProfiles.get(userId) || {
-          userId,
-          appRole: 'STUDENT',
-          interests: [],
-        }
-      );
+      const profile = this.memoryProfiles.get(userId);
+      if (!profile) {
+        throw new ApiException(
+          'USER_NOT_FOUND',
+          '사용자 정보를 찾을 수 없습니다.',
+          404,
+        );
+      }
+      return profile;
     }
 
     try {
@@ -204,18 +221,38 @@ export class RepositoryService {
         .maybeSingle();
       if (error) this.databaseError();
       if (!data) {
-        const { error: provisionError } = await this.supabase.db
-          .from('profiles')
-          .upsert({ user_id: userId }, { onConflict: 'user_id' });
-        if (provisionError) this.databaseError();
+        throw new ApiException(
+          'USER_NOT_FOUND',
+          '사용자 정보를 찾을 수 없습니다.',
+          404,
+        );
       }
       return {
         userId,
-        appRole: this.parseAppRole(data?.app_role),
-        interests: Array.isArray(data?.interests)
+        appRole: this.parseAppRole(data.app_role),
+        interests: Array.isArray(data.interests)
           ? data.interests.filter((value: unknown) => typeof value === 'string')
           : [],
       };
+    } catch (error) {
+      this.rethrowDatabaseError(error);
+    }
+  }
+
+  async hasAppProfile(userId: string): Promise<boolean> {
+    if (!this.supabase.hasDatabaseConfig) {
+      this.assertMemoryAllowed();
+      return this.memoryProfiles.has(userId);
+    }
+
+    try {
+      const { data, error } = await this.supabase.db
+        .from('profiles')
+        .select('user_id')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (error) this.databaseError();
+      return Boolean(data);
     } catch (error) {
       this.rethrowDatabaseError(error);
     }
