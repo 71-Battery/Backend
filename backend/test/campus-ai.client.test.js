@@ -120,6 +120,88 @@ test('accepts a valid no-context response', async () => {
   });
 });
 
+test('lists and registers notices through the server-only Campus AI API', async () => {
+  await withCampusEnv(async () => {
+    const requests = [];
+    global.fetch = async (url, options) => {
+      requests.push({
+        url: new URL(url),
+        options,
+      });
+      if (options.method === 'GET') {
+        return new Response(
+          JSON.stringify({
+            notices: [
+              {
+                id: 'notice-id',
+                title: '현장실습 안내',
+                content: '신청서를 제출하세요.',
+                type: 'notice',
+                starts_at: null,
+                source_id: 'school-123',
+                url: 'https://gsm.hs.kr/notices/123',
+                target_grade: '3학년',
+                target_department: '소프트웨어개발과',
+                created_at: '2026-07-24T00:00:00Z',
+                summary: '신청 안내입니다.',
+                summary_provider: 'fallback',
+                notified: true,
+              },
+            ],
+            count: 1,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          skipped: false,
+          notice: {
+            id: 'notice-id',
+            title: '현장실습 안내',
+            content: '신청서를 제출하세요.',
+            type: 'notice',
+            starts_at: null,
+            source_id: 'db-notice-id',
+            url: null,
+            target_grade: '전체',
+            target_department: '전체',
+            created_at: '2026-07-24T00:00:00Z',
+            summary: '신청 안내입니다.',
+            summary_provider: 'fallback',
+            notified: true,
+          },
+          notify_results: [{ channel: 'console', ok: true }],
+        }),
+        { status: 200 },
+      );
+    };
+
+    const client = new CampusAiClient();
+    const listed = await client.listNotices(25);
+    const ingested = await client.ingestNotice({
+      title: '현장실습 안내',
+      content: '신청서를 제출하세요.',
+      sourceId: 'db-notice-id',
+    });
+
+    assert.equal(listed.notices[0].target_grade, '3학년');
+    assert.equal(ingested.notice.notified, true);
+    assert.equal(requests[0].url.pathname, '/v1/notices');
+    assert.equal(requests[0].url.searchParams.get('limit'), '25');
+    assert.deepEqual(JSON.parse(requests[1].options.body), {
+      title: '현장실습 안내',
+      content: '신청서를 제출하세요.',
+      type: 'notice',
+      starts_at: null,
+      url: null,
+      source_id: 'db-notice-id',
+      target_grade: '전체',
+      target_department: '전체',
+    });
+  });
+});
+
 test('maps known upstream errors without exposing the upstream message', async () => {
   await withCampusEnv(async () => {
     global.fetch = async () =>

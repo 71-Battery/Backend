@@ -22,4 +22,8 @@ export class TtlCache<T> {
       expiresAt: Date.now() + ttlMs,
     });
   }
+
+  delete(key: string) {
+    this.entries.delete(key);
+  }
 }

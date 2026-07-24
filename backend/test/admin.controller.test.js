@@ -113,14 +113,37 @@ test('rejects a regulation whose content is empty after sanitization', async () 
 
 test('sanitizes a notice before publishing it', async () => {
   let storedInput;
-  const controller = new AdminController({
-    createNotice: async (input) => {
-      storedInput = input;
-      return { id: 'notice-id', ...input };
+  let aiInput;
+  let invalidated = false;
+  const controller = new AdminController(
+    {
+      createNotice: async (input) => {
+        storedInput = input;
+        return {
+          id: 'notice-id',
+          sourceUrl: null,
+          ...input,
+        };
+      },
     },
-  });
+    {
+      ingestNotice: async (input) => {
+        aiInput = input;
+        return {
+          skipped: false,
+          notice: { notified: true },
+          notify_results: [{ channel: 'console', ok: true }],
+        };
+      },
+    },
+    {
+      invalidateNotices: () => {
+        invalidated = true;
+      },
+    },
+  );
 
-  await controller.createNotice(
+  const response = await controller.createNotice(
     { id: 'editor-id', email: 'editor@gsm.hs.kr' },
     {
       title: '<b>학사 공지</b>',
@@ -136,6 +159,21 @@ test('sanitizes a notice before publishing it', async () => {
     content: '<em>본문</em>',
     category: '학교생활',
     userId: 'editor-id',
+  });
+  assert.deepEqual(aiInput, {
+    title: '학사 공지',
+    content: '<em>본문</em>',
+    type: 'notice',
+    sourceId: 'notice-id',
+    url: null,
+    targetGrade: '전체',
+    targetDepartment: '전체',
+  });
+  assert.equal(invalidated, true);
+  assert.deepEqual(response.data.notification, {
+    status: 'DELIVERED',
+    notified: true,
+    channels: [{ channel: 'console', ok: true }],
   });
 });
 

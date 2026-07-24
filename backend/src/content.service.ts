@@ -50,6 +50,14 @@ export class ContentService {
     }));
   }
 
+  invalidateNotices() {
+    this.noticeCache.delete('published');
+  }
+
+  invalidateRegulations() {
+    this.regulationCache.delete('published');
+  }
+
   private buildReason(
     item: Pick<
       NoticeRow,

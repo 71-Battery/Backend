@@ -12,6 +12,7 @@ import {
 import { z } from 'zod';
 import { ContentAdminGuard, SystemAdminGuard } from './app-role.guard';
 import { BearerAuthGuard } from './bearer-auth.guard';
+import { CampusAiClient } from './campus-ai/campus-ai.client';
 import { ApiException } from './common/api-exception';
 import type { AuthenticatedUser } from './common/authenticated-user';
 import { CurrentUser } from './common/current-user.decorator';
@@ -19,6 +20,7 @@ import {
   sanitizeAdminContent,
   sanitizeAdminPlainText,
 } from './content-sanitizer';
+import { ContentService } from './content.service';
 import { RepositoryService } from './repository.service';
 
 const ruleSchema = z.object({
@@ -115,7 +117,11 @@ function parseNotice(body: unknown): {
 @Controller('api/admin')
 @UseGuards(BearerAuthGuard, ContentAdminGuard)
 export class AdminController {
-  constructor(private readonly repository: RepositoryService) {}
+  constructor(
+    private readonly repository: RepositoryService,
+    private readonly campusAi?: CampusAiClient,
+    private readonly content?: ContentService,
+  ) {}
 
   @Get('rules')
   async getRules() {
@@ -139,6 +145,7 @@ export class AdminController {
       ...sanitized,
       userId: user.id,
     });
+    this.content?.invalidateRegulations();
     return {
       status: 'OK',
       data: {
@@ -163,6 +170,7 @@ export class AdminController {
     }
     const sanitized = parseRule(body);
     const rule = await this.repository.updateRegulation(parsedId.data, sanitized);
+    this.content?.invalidateRegulations();
     return {
       status: 'OK',
       data: {
@@ -183,6 +191,7 @@ export class AdminController {
       );
     }
     await this.repository.deleteRegulation(parsedId.data);
+    this.content?.invalidateRegulations();
     return {
       status: 'OK',
       data: { ruleId: parsedId.data },
@@ -199,9 +208,44 @@ export class AdminController {
       ...sanitized,
       userId: user.id,
     });
+    this.content?.invalidateNotices();
+
+    let notification: {
+      status: 'DELIVERED' | 'SKIPPED' | 'DEFERRED';
+      notified: boolean;
+      channels: Array<{ channel: string; ok: boolean }>;
+    } = {
+      status: 'DEFERRED',
+      notified: false,
+      channels: [],
+    };
+    if (this.campusAi) {
+      try {
+        const result = await this.campusAi.ingestNotice({
+          title: notice.title,
+          content: notice.content,
+          type: 'notice',
+          sourceId: notice.id,
+          url: notice.sourceUrl,
+          targetGrade: '전체',
+          targetDepartment: '전체',
+        });
+        notification = {
+          status: result.skipped ? 'SKIPPED' : 'DELIVERED',
+          notified: Boolean(result.notice?.notified),
+          channels: result.notify_results.map((item) => ({
+            channel: item.channel,
+            ok: item.ok,
+          })),
+        };
+      } catch {
+        // The database notice is the source of truth. A temporary AI outage
+        // must not roll back an already published school notice.
+      }
+    }
     return {
       status: 'OK',
-      data: { notice },
+      data: { notice, notification },
     };
   }
 

@@ -35,5 +35,44 @@ export const campusAiErrorSchema = z.object({
   }),
 });
 
+export const campusAiNoticeSchema = z.object({
+  id: z.string().min(1),
+  title: z.string(),
+  content: z.string().default(''),
+  type: z.string().default('notice'),
+  starts_at: z.string().nullable().optional(),
+  source_id: z.string().nullable().optional(),
+  url: z.string().nullable().optional(),
+  target_grade: z.string().default('전체'),
+  target_department: z.string().default('전체'),
+  created_at: z.string().min(1),
+  summary: z.string().nullable().optional(),
+  summary_provider: z.string().nullable().optional(),
+  notified: z.boolean().default(false),
+});
+
+export const campusAiNoticeListSchema = z.object({
+  notices: z.array(campusAiNoticeSchema),
+  count: z.number().int().nonnegative(),
+});
+
+export const campusAiNoticeIngestSchema = z.object({
+  skipped: z.boolean(),
+  reason: z.string().nullable().optional(),
+  notice: campusAiNoticeSchema.nullable().optional(),
+  notify_results: z
+    .array(
+      z.object({
+        channel: z.string(),
+        ok: z.boolean(),
+        error: z.string().optional(),
+      }),
+    )
+    .default([]),
+});
+
 export type CampusAiProfile = z.infer<typeof campusAiProfileSchema>;
 export type CampusAiResponse = z.infer<typeof campusAiResponseSchema>;
+export type CampusAiNotice = z.infer<typeof campusAiNoticeSchema>;
+export type CampusAiNoticeList = z.infer<typeof campusAiNoticeListSchema>;
+export type CampusAiNoticeIngest = z.infer<typeof campusAiNoticeIngestSchema>;

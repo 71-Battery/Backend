@@ -2,9 +2,13 @@ import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Agent, type Dispatcher } from 'undici';
 import { ApiException } from '../common/api-exception';
 import {
+  CampusAiNoticeIngest,
+  CampusAiNoticeList,
   CampusAiProfile,
   CampusAiResponse,
   campusAiErrorSchema,
+  campusAiNoticeIngestSchema,
+  campusAiNoticeListSchema,
   campusAiResponseSchema,
 } from './campus-ai.schemas';
 
@@ -16,6 +20,14 @@ type CampusAiErrorDefinition = {
 };
 
 const CAMPUS_AI_ERRORS: Record<string, CampusAiErrorDefinition> = {
+  INVALID_REQUEST: {
+    status: 400,
+    message: '공지 또는 AI 요청 내용을 확인해 주세요.',
+  },
+  UNAUTHORIZED: {
+    status: 503,
+    message: 'AI 서버 인증 정보를 확인할 수 없습니다.',
+  },
   KNOWLEDGE_BASE_UNAVAILABLE: {
     status: 503,
     message:
@@ -147,7 +159,54 @@ export class CampusAiClient implements OnModuleDestroy {
     };
   }
 
+  async listNotices(limit = 50): Promise<CampusAiNoticeList> {
+    const boundedLimit = Number.isInteger(limit)
+      ? Math.min(Math.max(limit, 1), 200)
+      : 50;
+    const url = this.endpointUrl('/v1/notices');
+    url.searchParams.set('limit', String(boundedLimit));
+    const payload = await this.requestNoticeApi(url, { method: 'GET' });
+    const parsed = campusAiNoticeListSchema.safeParse(payload);
+    if (!parsed.success) this.invalidResponse();
+    return parsed.data;
+  }
+
+  async ingestNotice(input: {
+    title: string;
+    content: string;
+    type?: 'notice' | 'schedule';
+    startsAt?: string | null;
+    url?: string | null;
+    sourceId?: string | null;
+    targetGrade?: string | null;
+    targetDepartment?: string | null;
+  }): Promise<CampusAiNoticeIngest> {
+    const payload = await this.requestNoticeApi(
+      this.endpointUrl('/v1/notices'),
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: input.title,
+          content: input.content,
+          type: input.type || 'notice',
+          starts_at: input.startsAt || null,
+          url: input.url || null,
+          source_id: input.sourceId || null,
+          target_grade: input.targetGrade || '전체',
+          target_department: input.targetDepartment || '전체',
+        }),
+      },
+    );
+    const parsed = campusAiNoticeIngestSchema.safeParse(payload);
+    if (!parsed.success) this.invalidResponse();
+    return parsed.data;
+  }
+
   private chatUrl() {
+    return this.endpointUrl('/v1/chat');
+  }
+
+  private endpointUrl(pathname: string) {
     let baseUrl: URL;
     try {
       baseUrl = new URL(this.baseUrl);
@@ -189,7 +248,56 @@ export class CampusAiClient implements OnModuleDestroy {
       );
     }
 
-    return new URL('/v1/chat', baseUrl);
+    return new URL(pathname, baseUrl);
+  }
+
+  private async requestNoticeApi(
+    url: URL,
+    request: { method: 'GET' | 'POST'; body?: string },
+  ): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      this.connectTimeoutMs + this.readTimeoutMs,
+    );
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+    };
+    if (request.body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    }
+    let response: Response;
+    let rawBody: string;
+    try {
+      response = await fetch(url, {
+        method: request.method,
+        headers,
+        body: request.body,
+        redirect: 'error',
+        signal: controller.signal,
+        dispatcher: this.dispatcher,
+      } as RequestInit & { dispatcher: Dispatcher });
+      const contentLength = Number(response.headers.get('content-length'));
+      if (
+        Number.isFinite(contentLength) &&
+        contentLength > MAX_RESPONSE_BYTES
+      ) {
+        this.invalidResponse();
+      }
+      rawBody = await response.text();
+      if (Buffer.byteLength(rawBody, 'utf8') > MAX_RESPONSE_BYTES) {
+        this.invalidResponse();
+      }
+    } catch (error) {
+      if (error instanceof ApiException) throw error;
+      this.rethrowFetchError(error, controller);
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const payload = this.parseJson(rawBody);
+    if (!response.ok) this.throwUpstreamError(payload);
+    return payload;
   }
 
   private parseJson(value: string): unknown {

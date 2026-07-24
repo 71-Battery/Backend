@@ -18,6 +18,8 @@ import { GuidanceController } from './guidance.controller';
 import { GuidanceService } from './guidance.service';
 import { HealthController } from './health.controller';
 import { NoticesController } from './notices.controller';
+import { NotificationsController } from './notifications.controller';
+import { NotificationsService } from './notifications.service';
 import { ProfileController } from './profile.controller';
 import { ProfileService } from './profile.service';
 import { RegulationsController } from './regulations.controller';
@@ -35,6 +37,7 @@ import { SupabaseModule } from './supabase.module';
     ProfileController,
     SchedulesController,
     NoticesController,
+    NotificationsController,
     RegulationsController,
     SavedResourcesController,
     ChatController,
@@ -54,6 +57,7 @@ import { SupabaseModule } from './supabase.module';
     ProfileService,
     SchedulesService,
     ContentService,
+    NotificationsService,
     AiContextService,
     ChatService,
     GuidanceService,

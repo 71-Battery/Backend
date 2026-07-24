@@ -70,3 +70,19 @@ API 명세서 템플릿입니다.
 
 ### POST /api/admin/schedules
 - 학사 일정을 등록한다.
+
+### POST /api/admin/notices
+- `ADMIN` 또는 `CONTENT_EDITOR` 권한으로 공지를 게시한다.
+- 게시된 공지는 내부 DB에 먼저 저장하고 Campus AI의 `/v1/notices`에
+  등록해 요약·알림 처리를 요청한다.
+- Campus AI가 일시적으로 실패해도 이미 저장된 공지는 유지하며
+  `notification.status: "DEFERRED"`를 반환한다.
+
+## 6. AI 공지 알림
+
+### GET /api/notifications
+- Bearer 토큰으로 인증된 학생만 호출할 수 있다.
+- Campus AI의 공지 목록을 백엔드가 조회한 뒤, 서버에서 확인한 학생의
+  학년·학과에 해당하는 알림만 반환한다.
+- 외부 공지의 HTML, 스크립트, 위험한 URL을 정리한 후 프론트엔드에 전달한다.
+- 프론트엔드는 Campus AI URL이나 내부 API 키를 직접 알지 못한다.
