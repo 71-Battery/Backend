@@ -38,6 +38,8 @@ export type ResolvedProfile = {
   profile: PublicStudentProfile;
   permissions: {
     canManageContent: boolean;
+    canManageUsers: boolean;
+    canAssignRoles: boolean;
   };
   appRole: AppProfileRow['appRole'];
   meta: {
@@ -113,6 +115,8 @@ export class ProfileService {
           canManageContent:
             appProfile.appRole === 'ADMIN' ||
             appProfile.appRole === 'CONTENT_EDITOR',
+          canManageUsers: appProfile.appRole === 'ADMIN',
+          canAssignRoles: appProfile.appRole === 'ADMIN',
         },
         appRole: appProfile.appRole,
         meta: {
@@ -130,6 +134,8 @@ export class ProfileService {
           canManageContent:
             appProfile.appRole === 'ADMIN' ||
             appProfile.appRole === 'CONTENT_EDITOR',
+          canManageUsers: appProfile.appRole === 'ADMIN',
+          canAssignRoles: appProfile.appRole === 'ADMIN',
         },
         appRole: appProfile.appRole,
         meta: {

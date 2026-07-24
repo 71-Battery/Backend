@@ -29,3 +29,27 @@ export class ContentAdminGuard implements CanActivate {
     return true;
   }
 }
+
+@Injectable()
+export class SystemAdminGuard implements CanActivate {
+  constructor(private readonly repository: RepositoryService) {}
+
+  async canActivate(context: ExecutionContext) {
+    const user = context
+      .switchToHttp()
+      .getRequest<{ user?: AuthenticatedUser }>().user;
+    if (!user) {
+      throw new ApiException('AUTH_REQUIRED', '인증이 필요합니다.', 401);
+    }
+
+    const profile = await this.repository.getAppProfile(user.id);
+    if (profile.appRole !== 'ADMIN') {
+      throw new ApiException(
+        'SYSTEM_ADMIN_REQUIRED',
+        '관리자 권한이 필요합니다.',
+        403,
+      );
+    }
+    return true;
+  }
+}

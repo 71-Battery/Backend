@@ -85,3 +85,40 @@ test('rejects an incomplete trusted profile before AI use', async () => {
       error.code === 'PROFILE_INCOMPLETE' && error.getStatus() === 400,
   );
 });
+
+test('grants member management permissions only to app admins', async () => {
+  const service = new ProfileService(
+    {
+      getStudentByEmail: async () => ({
+        id: 1,
+        name: '관리자',
+        email: 'admin@gsm.hs.kr',
+        grade: 3,
+        classNum: 1,
+        number: 1,
+        studentNumber: 3101,
+        major: 'SW_DEVELOPMENT',
+        specialty: null,
+        role: 'GENERAL_STUDENT',
+      }),
+    },
+    {
+      getAppProfile: async () => ({
+        userId: 'admin-id',
+        appRole: 'ADMIN',
+        interests: [],
+      }),
+      getProfileFallback: async () => null,
+      saveProfileSnapshot: async () => undefined,
+    },
+  );
+
+  const result = await service.resolve({
+    id: 'admin-id',
+    email: 'admin@gsm.hs.kr',
+  });
+
+  assert.equal(result.permissions.canManageContent, true);
+  assert.equal(result.permissions.canManageUsers, true);
+  assert.equal(result.permissions.canAssignRoles, true);
+});

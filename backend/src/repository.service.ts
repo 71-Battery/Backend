@@ -7,11 +7,22 @@ import {
 import { SupabaseService } from './supabase.service';
 
 export type ResourceType = 'SCHEDULE' | 'NOTICE' | 'RULE';
+export type AppRole = 'STUDENT' | 'CONTENT_EDITOR' | 'ADMIN';
 
 export type AppProfileRow = {
   userId: string;
-  appRole: 'STUDENT' | 'CONTENT_EDITOR' | 'ADMIN';
+  appRole: AppRole;
   interests: string[];
+};
+
+export type AdminUserRow = {
+  id: string;
+  email: string;
+  name: string;
+  appRole: AppRole;
+  emailConfirmed: boolean;
+  createdAt: string;
+  lastSignInAt: string | null;
 };
 
 export type ProfileFallbackRow = {
@@ -483,6 +494,281 @@ export class RepositoryService {
     }
   }
 
+  async updateRegulation(
+    regulationId: string,
+    input: {
+      title: string;
+      content: string;
+      category: string;
+    },
+  ): Promise<RegulationRow> {
+    if (!this.supabase.hasDatabaseConfig) {
+      this.assertMemoryAllowed();
+      const index = this.memoryRegulations.findIndex(
+        (item) => item.id === regulationId,
+      );
+      if (index < 0) {
+        throw new ApiException(
+          'REGULATION_NOT_FOUND',
+          '수정할 규정을 찾을 수 없습니다.',
+          404,
+        );
+      }
+      const updated = {
+        ...this.memoryRegulations[index],
+        ...input,
+        version: this.memoryRegulations[index].version + 1,
+        updatedAt: new Date().toISOString(),
+      };
+      this.memoryRegulations[index] = updated;
+      return updated;
+    }
+
+    try {
+      const { data, error } = await this.supabase.db
+        .from('regulations')
+        .update({
+          title: input.title,
+          content: input.content,
+          category: input.category,
+        })
+        .eq('id', regulationId)
+        .select(
+          'id,title,summary,content,category,department,published_at,effective_from,effective_to,target_grades,target_majors,source_url,version,updated_at',
+        )
+        .maybeSingle();
+      if (error) this.databaseError();
+      if (!data) {
+        throw new ApiException(
+          'REGULATION_NOT_FOUND',
+          '수정할 규정을 찾을 수 없습니다.',
+          404,
+        );
+      }
+      return {
+        ...this.mapNotice(data),
+        effectiveFrom: this.nullableString(data.effective_from),
+        effectiveTo: this.nullableString(data.effective_to),
+      };
+    } catch (error) {
+      this.rethrowDatabaseError(error);
+    }
+  }
+
+  async deleteRegulation(regulationId: string): Promise<void> {
+    if (!this.supabase.hasDatabaseConfig) {
+      this.assertMemoryAllowed();
+      const index = this.memoryRegulations.findIndex(
+        (item) => item.id === regulationId,
+      );
+      if (index < 0) {
+        throw new ApiException(
+          'REGULATION_NOT_FOUND',
+          '삭제할 규정을 찾을 수 없습니다.',
+          404,
+        );
+      }
+      this.memoryRegulations.splice(index, 1);
+      return;
+    }
+
+    try {
+      const { data, error } = await this.supabase.db
+        .from('regulations')
+        .delete()
+        .eq('id', regulationId)
+        .select('id')
+        .maybeSingle();
+      if (error) this.databaseError();
+      if (!data) {
+        throw new ApiException(
+          'REGULATION_NOT_FOUND',
+          '삭제할 규정을 찾을 수 없습니다.',
+          404,
+        );
+      }
+    } catch (error) {
+      this.rethrowDatabaseError(error);
+    }
+  }
+
+  async createNotice(input: {
+    title: string;
+    summary: string;
+    content: string;
+    category: string;
+    userId: string;
+  }): Promise<NoticeRow> {
+    if (!this.supabase.hasDatabaseConfig) {
+      this.assertMemoryAllowed();
+      const now = new Date().toISOString();
+      const row: NoticeRow = {
+        id: `notice-${Date.now()}`,
+        title: input.title,
+        summary: input.summary,
+        content: input.content,
+        category: input.category,
+        department: null,
+        publishedAt: now,
+        deadlineAt: null,
+        targetGrades: [],
+        targetMajors: [],
+        sourceUrl: null,
+        version: 1,
+        updatedAt: now,
+      };
+      this.memoryNotices.unshift(row);
+      return row;
+    }
+
+    try {
+      const { data, error } = await this.supabase.db
+        .from('notices')
+        .insert({
+          title: input.title,
+          summary: input.summary,
+          content: input.content,
+          category: input.category,
+          status: 'PUBLISHED',
+          published_at: new Date().toISOString(),
+          created_by: input.userId,
+        })
+        .select(
+          'id,title,summary,content,category,department,published_at,deadline_at,target_grades,target_majors,source_url,version,updated_at',
+        )
+        .single();
+      if (error || !data) this.databaseError();
+      return this.mapNotice(data);
+    } catch (error) {
+      this.rethrowDatabaseError(error);
+    }
+  }
+
+  async listAppUsers(
+    page: number,
+    perPage: number,
+  ): Promise<{ users: AdminUserRow[]; total: number }> {
+    if (!this.supabase.hasDatabaseConfig) {
+      this.assertMemoryAllowed();
+      const users = [...this.memoryProfiles.values()]
+        .slice((page - 1) * perPage, page * perPage)
+        .map((profile) => ({
+          id: profile.userId,
+          email: '',
+          name: this.memoryFallbacks.get(profile.userId)?.name || '사용자',
+          appRole: profile.appRole,
+          emailConfirmed: true,
+          createdAt: '',
+          lastSignInAt: null,
+        }));
+      return { users, total: this.memoryProfiles.size };
+    }
+
+    try {
+      const { data: authData, error: authError } =
+        await this.supabase.db.auth.admin.listUsers({ page, perPage });
+      if (authError) this.databaseError();
+
+      const authUsers = authData.users || [];
+      const userIds = authUsers.map((user) => user.id);
+      if (userIds.length === 0) {
+        return {
+          users: [],
+          total: Number((authData as { total?: number }).total || 0),
+        };
+      }
+
+      const [
+        { data: profileRows, error: profileError },
+        { data: fallbackRows, error: fallbackError },
+      ] = await Promise.all([
+        this.supabase.db
+          .from('profiles')
+          .select('user_id,app_role')
+          .in('user_id', userIds),
+        this.supabase.db
+          .from('profile_fallbacks')
+          .select('user_id,name')
+          .in('user_id', userIds),
+      ]);
+      if (profileError || fallbackError) this.databaseError();
+
+      const roles = new Map(
+        (profileRows || []).map((row) => [
+          String(row.user_id),
+          this.parseAppRole(row.app_role),
+        ]),
+      );
+      const names = new Map(
+        (fallbackRows || []).map((row) => [
+          String(row.user_id),
+          sanitizeAdminPlainText(String(row.name || '')),
+        ]),
+      );
+
+      return {
+        users: authUsers.map((user) => ({
+          id: user.id,
+          email: String(user.email || '').trim().toLowerCase(),
+          name:
+            names.get(user.id) ||
+            sanitizeAdminPlainText(String(user.user_metadata?.name || '')) ||
+            '사용자',
+          appRole: roles.get(user.id) || 'STUDENT',
+          emailConfirmed: Boolean(user.email_confirmed_at),
+          createdAt: String(user.created_at || ''),
+          lastSignInAt: this.nullableString(user.last_sign_in_at),
+        })),
+        total: Number(
+          (authData as { total?: number }).total || authUsers.length,
+        ),
+      };
+    } catch (error) {
+      this.rethrowDatabaseError(error);
+    }
+  }
+
+  async updateAppRole(userId: string, appRole: AppRole): Promise<AppProfileRow> {
+    if (!this.supabase.hasDatabaseConfig) {
+      this.assertMemoryAllowed();
+      const profile = this.memoryProfiles.get(userId);
+      if (!profile) {
+        throw new ApiException(
+          'USER_NOT_FOUND',
+          '사용자 정보를 찾을 수 없습니다.',
+          404,
+        );
+      }
+      const updated = { ...profile, appRole };
+      this.memoryProfiles.set(userId, updated);
+      return updated;
+    }
+
+    try {
+      const { data, error } = await this.supabase.db
+        .from('profiles')
+        .update({ app_role: appRole })
+        .eq('user_id', userId)
+        .select('user_id,app_role,interests')
+        .maybeSingle();
+      if (error) this.databaseError();
+      if (!data) {
+        throw new ApiException(
+          'USER_NOT_FOUND',
+          '사용자 정보를 찾을 수 없습니다.',
+          404,
+        );
+      }
+      return {
+        userId: String(data.user_id),
+        appRole: this.parseAppRole(data.app_role),
+        interests: this.stringArray(data.interests),
+      };
+    } catch (error) {
+      this.rethrowDatabaseError(error);
+    }
+  }
+
   private mapNotice(row: Record<string, any>): NoticeRow {
     return {
       id: String(row.id),
@@ -503,7 +789,7 @@ export class RepositoryService {
     };
   }
 
-  private parseAppRole(value: unknown): AppProfileRow['appRole'] {
+  private parseAppRole(value: unknown): AppRole {
     return value === 'ADMIN' || value === 'CONTENT_EDITOR'
       ? value
       : 'STUDENT';

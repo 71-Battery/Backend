@@ -7,7 +7,7 @@ import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { AdminController } from './admin.controller';
 import { AiContextService } from './ai-context.service';
-import { ContentAdminGuard } from './app-role.guard';
+import { ContentAdminGuard, SystemAdminGuard } from './app-role.guard';
 import { BearerAuthGuard } from './bearer-auth.guard';
 import { ContentService } from './content.service';
 import { CampusAiModule } from './campus-ai/campus-ai.module';
@@ -49,6 +49,7 @@ import { SupabaseModule } from './supabase.module';
     CampusChatAuthGuard,
     CampusChatExceptionFilter,
     ContentAdminGuard,
+    SystemAdminGuard,
     RepositoryService,
     ProfileService,
     SchedulesService,
